@@ -53,7 +53,8 @@ def test_state_roundtrip():
     path.unlink()
 
 def test_load_state_missing_file():
-    path = Path(tempfile.mktemp(suffix=".json"))
+    path = Path(tempfile.gettempdir()) / "nonexistent_test_screenshot_state.json"
+    path.unlink(missing_ok=True)  # clean up any prior run
     assert not path.exists()
     state = {"last_hash": None, "last_sent_text": None}
     if path.exists():

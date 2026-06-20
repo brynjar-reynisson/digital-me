@@ -84,27 +84,28 @@ def run_ocr(bmp_bytes: bytes) -> str:
 
 
 def send_to_digital_me(source: str, name: str, content: str) -> None:
-    requests.post(
+    resp = requests.post(
         DIGITAL_ME_URL,
         json={"source": source, "name": name, "content": content},
         timeout=10,
     )
+    resp.raise_for_status()
 
 
 def main() -> None:
+    bmp_bytes = take_screenshot_bmp()
     title = get_active_window_title()
     pagename, window_title = detect_site(title)
     if pagename is None:
         return
 
-    bmp_bytes = take_screenshot_bmp()
     current_hash = hash_bytes(bmp_bytes)
 
     state = load_state()
     if current_hash == state.get("last_hash"):
         return
 
-    ocr_text = run_ocr(bmp_bytes)
+    ocr_text = run_ocr(bmp_bytes).strip().replace("\r\n", "\n")
 
     if ocr_text == state.get("last_sent_text"):
         state["last_hash"] = current_hash
