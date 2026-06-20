@@ -8,3 +8,6 @@ digital-me-dev/
 .claude/todos.md
 .idea/
 frontend/node/
+scripts/screenshot-capture-state.json
+scripts/screenshot-capture.log
+e2e/node_modules/
