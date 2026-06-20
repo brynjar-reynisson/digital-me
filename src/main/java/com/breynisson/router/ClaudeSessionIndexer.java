@@ -22,6 +22,7 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -69,11 +70,15 @@ public class ClaudeSessionIndexer {
                 return;
             }
 
-            String content = parseJsonl(jsonlFile);
-            if (content.isBlank()) return;
+            ParsedSession parsed = parseJsonl(jsonlFile);
+            if (parsed.content().isBlank()) return;
+
+            LocalDateTime sessionStart = parsed.startTime() != null
+                    ? parsed.startTime()
+                    : LocalDateTime.ofInstant(Instant.ofEpochMilli(fileModified), ZoneId.systemDefault());
 
             deleteOldResourceFiles(sourceUrl);
-            Path resourceFile = writeResourceFile(sourceUrl, projectName, content);
+            Path resourceFile = writeResourceFile(sourceUrl, projectName, parsed.content(), sessionStart);
             if (resourceFile == null) return;
 
             if (existing.isEmpty()) {
@@ -89,9 +94,12 @@ public class ClaudeSessionIndexer {
         }
     }
 
-    private String parseJsonl(Path file) throws IOException {
+    private record ParsedSession(String content, LocalDateTime startTime) {}
+
+    private ParsedSession parseJsonl(Path file) throws IOException {
         List<String[]> turns = new ArrayList<>();
         Set<String> seenAssistantIds = new HashSet<>();
+        LocalDateTime startTime = null;
 
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             String line;
@@ -105,7 +113,15 @@ public class ClaudeSessionIndexer {
                     JsonNode content = node.path("message").path("content");
                     if (content.isTextual()) {
                         String text = content.asText().strip();
-                        if (!text.isBlank()) turns.add(new String[]{"user", text});
+                        if (!text.isBlank()) {
+                            if (startTime == null) {
+                                String ts = node.path("timestamp").asText("");
+                                if (!ts.isBlank()) {
+                                    startTime = LocalDateTime.ofInstant(Instant.parse(ts), ZoneId.systemDefault());
+                                }
+                            }
+                            turns.add(new String[]{"user", text});
+                        }
                     }
                 } else if ("assistant".equals(type)) {
                     String msgId = node.path("message").path("id").asText("");
@@ -125,13 +141,13 @@ public class ClaudeSessionIndexer {
             }
         }
 
-        if (turns.isEmpty()) return "";
+        if (turns.isEmpty()) return new ParsedSession("", startTime);
         StringBuilder result = new StringBuilder();
         for (String[] turn : turns) {
             result.append("user".equals(turn[0]) ? "User: " : "Claude: ");
             result.append(turn[1]).append("\n\n");
         }
-        return result.toString().strip();
+        return new ParsedSession(result.toString().strip(), startTime);
     }
 
     private void deleteOldResourceFiles(String sourceUrl) {
@@ -156,11 +172,10 @@ public class ClaudeSessionIndexer {
         }
     }
 
-    private Path writeResourceFile(String sourceUrl, String projectName, String content) {
+    private Path writeResourceFile(String sourceUrl, String projectName, String content, LocalDateTime sessionStart) {
         try {
-            LocalDateTime now = LocalDateTime.now();
-            String yearMonth = YearMonth.from(now).toString();
-            String timestamp = now.format(TIMESTAMP_FMT);
+            String yearMonth = YearMonth.from(sessionStart).toString();
+            String timestamp = sessionStart.format(TIMESTAMP_FMT);
             String fileName = yearMonth + "-claudecode-" + projectName + "-" + timestamp + ".txt";
             Path monthDir = mcpResourcesDir.resolve(yearMonth);
             Files.createDirectories(monthDir);
