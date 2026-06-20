@@ -30,13 +30,16 @@ def detect_site(window_title: str) -> tuple[str | None, str]:
     return None, window_title
 
 
-def get_active_window_title() -> str:
-    return win32gui.GetWindowText(win32gui.GetForegroundWindow())
+def get_active_window() -> tuple[int, str]:
+    hwnd = win32gui.GetForegroundWindow()
+    return hwnd, win32gui.GetWindowText(hwnd)
 
 
-def take_screenshot_bmp() -> bytes:
+def take_screenshot_bmp(hwnd: int) -> bytes:
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    region = {"left": left, "top": top, "width": right - left, "height": bottom - top}
     with mss.mss() as sct:
-        img = sct.grab(sct.monitors[1])
+        img = sct.grab(region)
         pil = Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
         buf = io.BytesIO()
         pil.save(buf, format="BMP")
@@ -93,12 +96,11 @@ def send_to_digital_me(source: str, name: str, content: str) -> None:
 
 
 def main() -> None:
-    bmp_bytes = take_screenshot_bmp()
-    title = get_active_window_title()
+    hwnd, title = get_active_window()
     pagename, window_title = detect_site(title)
     if pagename is None:
         return
-
+    bmp_bytes = take_screenshot_bmp(hwnd)
     current_hash = hash_bytes(bmp_bytes)
 
     state = load_state()
