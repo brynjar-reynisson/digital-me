@@ -5,9 +5,12 @@ from pathlib import Path
 
 # Inline the two pure functions so this file has no external imports
 SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
+BROWSER_KEYWORDS = {"chrome", "edge", "firefox", "opera", "brave"}
 
 def detect_site(window_title: str) -> tuple:
     lower = window_title.lower()
+    if not any(b in lower for b in BROWSER_KEYWORDS):
+        return None, window_title
     for keyword, pagename in SITE_KEYWORDS.items():
         if keyword in lower:
             return pagename, window_title
@@ -34,8 +37,20 @@ def test_detect_no_match():
     assert pagename is None
 
 def test_detect_case_insensitive():
-    pagename, _ = detect_site("QUORA - SOME TITLE")
+    pagename, _ = detect_site("QUORA - SOME TITLE - GOOGLE CHROME")
     assert pagename == "quora"
+
+def test_detect_ignores_notepad():
+    pagename, _ = detect_site("screenshot_quora_20260620_014350.txt - Notepad")
+    assert pagename is None
+
+def test_detect_ignores_explorer():
+    pagename, _ = detect_site("LinkedIn - File Explorer")
+    assert pagename is None
+
+def test_detect_microsoft_edge():
+    pagename, _ = detect_site("Feed | LinkedIn - Microsoft Edge")
+    assert pagename == "linkedin"
 
 def test_hash_deterministic():
     assert hash_bytes(b"hello") == hash_bytes(b"hello")
@@ -67,6 +82,9 @@ if __name__ == "__main__":
     test_detect_facebook()
     test_detect_no_match()
     test_detect_case_insensitive()
+    test_detect_ignores_notepad()
+    test_detect_ignores_explorer()
+    test_detect_microsoft_edge()
     test_hash_deterministic()
     test_hash_distinct()
     test_state_roundtrip()

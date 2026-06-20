@@ -20,10 +20,13 @@ from winsdk.windows.storage.streams import DataWriter, InMemoryRandomAccessStrea
 STATE_FILE = Path(__file__).parent / "screenshot-capture-state.json"
 DIGITAL_ME_URL = "http://localhost:8080/addContent"
 SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
+BROWSER_KEYWORDS = {"chrome", "edge", "firefox", "opera", "brave"}
 
 
 def detect_site(window_title: str) -> tuple[str | None, str]:
     lower = window_title.lower()
+    if not any(b in lower for b in BROWSER_KEYWORDS):
+        return None, window_title
     for keyword, pagename in SITE_KEYWORDS.items():
         if keyword in lower:
             return pagename, window_title
