@@ -48,7 +48,7 @@ public class ResourceReceiver {
     }
 
     /** Extracts the source URL from an mcp-resources file (first line, trimmed). */
-    static String firstLine(String content) {
+    public static String firstLine(String content) {
         int nl = content.indexOf('\n');
         return (nl >= 0 ? content.substring(0, nl) : content).trim();
     }

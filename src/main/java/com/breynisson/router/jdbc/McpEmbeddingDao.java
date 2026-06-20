@@ -27,4 +27,8 @@ public class McpEmbeddingDao {
                 "INSERT OR REPLACE INTO " + TABLE + " (FILE_PATH, SOURCE_URL, EMBEDDING, INDEXED_AT) VALUES (?, ?, ?, ?)",
                 embedding.filePath, embedding.sourceUrl, embedding.embedding, embedding.indexedAt);
     }
+
+    public static void deleteByFilePath(String filePath) {
+        DatabaseAdapter.runPreparedStatement("DELETE FROM " + TABLE + " WHERE FILE_PATH = ?", filePath);
+    }
 }
