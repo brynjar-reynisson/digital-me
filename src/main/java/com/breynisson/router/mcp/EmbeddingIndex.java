@@ -69,7 +69,9 @@ public class EmbeddingIndex {
         try {
             String raw = Files.readString(file, StandardCharsets.UTF_8);
             String sourceUrl = ResourceReceiver.firstLine(raw);
-            String toEmbed = raw.length() > MAX_EMBED_CHARS ? raw.substring(0, MAX_EMBED_CHARS) : raw;
+            int nl = raw.indexOf('\n');
+            String body = nl >= 0 ? raw.substring(nl + 1) : raw;
+            String toEmbed = body.length() > MAX_EMBED_CHARS ? body.substring(0, MAX_EMBED_CHARS) : body;
             float[] embedding = embeddingClient.embed(toEmbed);
             if (embedding == null) return; // Ollama unavailable
             McpEmbeddingDao.upsert(new McpEmbedding(

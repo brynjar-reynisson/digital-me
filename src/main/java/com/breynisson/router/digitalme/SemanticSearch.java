@@ -37,7 +37,7 @@ public class SemanticSearch {
 
     /** Returns top-10 semantically similar results; empty list if Ollama is unavailable. */
     public List<SearchResult> search(String query) {
-        return embeddingIndex.findSimilar(query, 10).stream()
+        return embeddingIndex.findSimilar(query, 50).stream()
                 .filter(r -> !ExclusionRules.isExcluded(r.sourceUrl()))
                 .map(r -> {
                     Path p = Path.of(r.filePath());
