@@ -50,7 +50,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - Singleton SQLite connection; reopens if closed
 - `init()` must be called at startup — runs numbered migration scripts from classpath (`digital-me-db-N.sql`)
 - Migration tracking: `APPLICATION_METADATA` table with `database.version` key
-- To add a migration: create `src/main/resources/digital-me-db-3.sql` (next number after the existing two)
+- To add a migration: create `src/main/resources/digital-me-db-5.sql` (next number after the existing four — check the highest existing `digital-me-db-N.sql` before picking a number)
 - `setDefaultDatabasePath()` also closes and nulls the current connection, so the new path takes effect immediately
 
 ### `TextEntryDao`

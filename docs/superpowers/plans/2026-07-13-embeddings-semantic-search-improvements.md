@@ -4,7 +4,7 @@
 
 **Goal:** Fix P1, P2, P3(low), P4, P5, P6, P7 from `docs/reviews/2026-07-13-embeddings-semantic-search-improvements.md` — chunk long documents instead of truncating them, use nomic task prefixes, cache unit-normalized vectors for fast dot-product scoring, apply a score threshold, dedup/limit results correctly, and keep the embedding table clean and model-scoped.
 
-**Architecture:** A new `Chunker` utility splits document bodies into ~2000-char, sentence-boundary-snapped windows. `MCP_EMBEDDING` becomes chunk-keyed `(FILE_PATH, CHUNK_INDEX)` with `CHUNK_TEXT` and `MODEL` columns (schema wipe-and-rebuild via `digital-me-db-3.sql`). `EmbeddingIndex` embeds/searches at the chunk level, keeps an in-memory unit-normalized vector cache, reconciles stale rows on startup, and dedups search results to one (best-scoring) chunk per file. `SemanticSearch` builds snippets directly from the winning chunk's text instead of re-reading files.
+**Architecture:** A new `Chunker` utility splits document bodies into ~2000-char, sentence-boundary-snapped windows. `MCP_EMBEDDING` becomes chunk-keyed `(FILE_PATH, CHUNK_INDEX)` with `CHUNK_TEXT` and `MODEL` columns (schema wipe-and-rebuild via `digital-me-db-4.sql`). `EmbeddingIndex` embeds/searches at the chunk level, keeps an in-memory unit-normalized vector cache, reconciles stale rows on startup, and dedups search results to one (best-scoring) chunk per file. `SemanticSearch` builds snippets directly from the winning chunk's text instead of re-reading files.
 
 **Tech Stack:** Java 19, Spring Boot 3.3.11, SQLite (`sqlite-jdbc`), JUnit 5. No new dependencies.
 
@@ -199,7 +199,7 @@ git -C "C:\Users\Lenovo\IdeaProjects\digital-me" commit -m "feat: add sentence-b
 ### Task 2: Schema migration + `McpEmbedding` model + `McpEmbeddingDao`
 
 **Files:**
-- Create: `src/main/resources/digital-me-db-3.sql`
+- Create: `src/main/resources/digital-me-db-4.sql`
 - Modify: `src/main/java/com/breynisson/router/jdbc/model/McpEmbedding.java`
 - Modify: `src/main/java/com/breynisson/router/jdbc/McpEmbeddingDao.java`
 - Modify: `src/test/java/com/breynisson/router/jdbc/McpEmbeddingDaoTest.java`
@@ -474,7 +474,7 @@ Expected: PASS (7 tests)
 - [ ] **Step 7: Commit**
 
 ```bash
-git -C "C:\Users\Lenovo\IdeaProjects\digital-me" add src/main/resources/digital-me-db-3.sql src/main/java/com/breynisson/router/jdbc/model/McpEmbedding.java src/main/java/com/breynisson/router/jdbc/McpEmbeddingDao.java src/test/java/com/breynisson/router/jdbc/McpEmbeddingDaoTest.java
+git -C "C:\Users\Lenovo\IdeaProjects\digital-me" add src/main/resources/digital-me-db-4.sql src/main/java/com/breynisson/router/jdbc/model/McpEmbedding.java src/main/java/com/breynisson/router/jdbc/McpEmbeddingDao.java src/test/java/com/breynisson/router/jdbc/McpEmbeddingDaoTest.java
 git -C "C:\Users\Lenovo\IdeaProjects\digital-me" commit -m "feat: chunk-key MCP_EMBEDDING schema with model tracking"
 ```
 

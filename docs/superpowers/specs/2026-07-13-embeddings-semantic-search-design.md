@@ -33,7 +33,7 @@ threshold and dedup-to-file before returning a final top-50.
 
 ## 1. Schema Migration (P1, P7)
 
-New file `src/main/resources/digital-me-db-3.sql`. Drops and recreates `MCP_EMBEDDING`
+New file `src/main/resources/digital-me-db-4.sql`. Drops and recreates `MCP_EMBEDDING`
 (wipe-and-rebuild — old rows can't satisfy the new `NOT NULL` columns and aren't worth
 preserving):
 
