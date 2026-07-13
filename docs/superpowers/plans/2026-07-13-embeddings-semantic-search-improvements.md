@@ -33,7 +33,7 @@
 - [ ] **Step 1: Create the feature branch**
 
 ```bash
-git -C "C:\Users\Lenovo\IdeaProjects\digital-me" checkout -b feature/embeddings-semantic-search-improvements
+git -C "C:\Users\Lenovo\IdeaProjects\digital-me" checkout -b feature/embeddings_and_semantic_search_improvements
 ```
 
 - [ ] **Step 2: Write the failing tests**
@@ -61,11 +61,6 @@ class ChunkerTest {
         return sb.toString().strip();
     }
 
-    private static String lastSentence(String chunk) {
-        String[] parts = chunk.strip().split("(?<=\\.)\\s+");
-        return parts[parts.length - 1];
-    }
-
     @Test
     void shortTextProducesSingleChunk() {
         String text = "Just one short sentence.";
@@ -89,19 +84,16 @@ class ChunkerTest {
     }
 
     @Test
-    void consecutiveChunksOverlapByOneSentence() {
+    void chunksReconstructOriginalTextExactly() {
         String text = repeatedSentences(60);
         List<String> chunks = Chunker.chunk(text);
         assertTrue(chunks.size() > 1);
 
-        for (int i = 0; i < chunks.size() - 1; i++) {
-            String expectedOverlapSentence = lastSentence(chunks.get(i));
-            String nextChunkStripped = chunks.get(i + 1).strip();
-            assertTrue(nextChunkStripped.startsWith(expectedOverlapSentence),
-                    "Next chunk should start with the sentence pushed out of the previous chunk.\n"
-                            + "Expected prefix: [" + expectedOverlapSentence + "]\nActual next chunk start: ["
-                            + nextChunkStripped.substring(0, Math.min(120, nextChunkStripped.length())) + "]");
-        }
+        StringBuilder reconstructed = new StringBuilder();
+        for (String chunk : chunks) reconstructed.append(chunk);
+
+        assertEquals(text, reconstructed.toString(),
+                "Chunks should partition the text cleanly at sentence boundaries with no duplicated or dropped characters");
     }
 
     @Test
@@ -146,9 +138,10 @@ import java.util.List;
 
 /**
  * Splits document text into ~{@link #TARGET_CHUNK_CHARS}-char windows, snapping each chunk's end
- * back to the nearest full sentence within {@link #BOUNDARY_LOOKBACK_CHARS} chars. The next chunk
- * starts at that same boundary, so the sentence that would otherwise have been cut becomes the
- * first sentence of the next chunk (the overlap).
+ * back to the nearest full sentence within {@link #BOUNDARY_LOOKBACK_CHARS} chars, instead of
+ * cutting a sentence in half. The next chunk starts at that same boundary, so the deferred
+ * sentence becomes the first sentence of the next chunk — chunks partition the text cleanly with
+ * no duplicated or dropped characters.
  */
 class Chunker {
 
