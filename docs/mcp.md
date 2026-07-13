@@ -11,7 +11,7 @@ Exposed at `POST /mcp` (Streamable HTTP transport, `HttpServletStreamableServerT
 
 1. Tries semantic search first via `SemanticSearch.search()` (top-10 results by cosine similarity, filtered via `ExclusionRules`)
 2. Falls back to keyword scan if semantic search returns empty (e.g. Ollama unavailable): case-insensitive OR scan across all `.txt` files, also filtered via `ExclusionRules`
-3. Each result includes `source` (URL), `name` (filename), and `snippet` (first 2000 chars of file content after the source URL line, whitespace-normalised; truncated snippets include `<truncated, use fetch tool>` hint)
+3. Each result includes `source` (URL), `name` (filename), and `snippet` — for semantic results, built directly from the matching chunk's text (`SemanticSearch.chunkSnippet()`); for the keyword fallback, the first 2000 chars of file content after the source URL line (`SemanticSearch.snippet()`), whitespace-normalised; truncated snippets include `<truncated, use fetch tool>` hint
 4. Response is truncated at ~900 000 chars to avoid overwhelming the MCP client
 
 ## Fetch tool behaviour

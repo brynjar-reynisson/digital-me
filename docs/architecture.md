@@ -70,9 +70,9 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 
 ### `EmbeddingIndex`
 - Runs `indexAll()` on a daemon thread at startup: loads already-indexed file paths from DB (one SELECT), then walks `mcp-resources/` and indexes new files only
-- `indexFile(path)`: reads file, truncates content to **4000 chars**, calls `embeddingClient.embed()`, stores result in `MCP_EMBEDDING` via `McpEmbeddingDao`
-- `findSimilar(query, topK)`: embeds the query, loads all stored embeddings, ranks by cosine similarity, returns top-K `ScoredResult` records
-- First line of each file is the source URL (written by `ResourceReceiver`); subsequent lines are the content
+- `indexFile(path)`: reads the file, splits the body into ~2000-char sentence-boundary-aware chunks via `Chunker`, embeds each chunk (prefixed with `ollama.embedding.document-prefix`), stores one row per chunk in `MCP_EMBEDDING` with a unit-normalized vector, and adds each to the in-memory cache
+- `findSimilar(query, topK)`: embeds the (prefixed) query, scores every cached chunk vector via dot product, drops chunks below `semantic-search.min-score`, dedups to each file's best-scoring chunk, and returns the top-K `ScoredResult` records (`filePath`, `sourceUrl`, `score`, `chunkText`)
+- `indexAll()` additionally reconciles the table on each run: deletes rows for files no longer on disk, and deletes rows whose `MODEL` doesn't match the currently configured `ollama.embedding.model` (both get re-embedded on the same pass)
 
 ### `McpEmbeddingDao`
 - `upsert(McpEmbedding)` — INSERT OR REPLACE into `MCP_EMBEDDING`
@@ -111,7 +111,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 APPLICATION_METADATA (KEY PK, VALUE)   -- stores database.version
 TEXT_ENTRY (UUID PK, TIME, NAME)        -- indexed content entries
 TEXT_ENTRY_METADATA (TEXT_ENTRY_UUID, KEY, VALUE, PK composite)
-MCP_EMBEDDING (FILE_PATH PK, SOURCE_URL, EMBEDDING BLOB, INDEXED_AT)  -- vector embeddings for semantic search
+MCP_EMBEDDING (FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING BLOB, MODEL, INDEXED_AT, PK(FILE_PATH, CHUNK_INDEX))  -- chunked vector embeddings
 ```
 
 `TIME` and `INDEXED_AT` are stored as ISO-8601 instant strings (e.g. `2024-01-15T10:30:00Z`).
