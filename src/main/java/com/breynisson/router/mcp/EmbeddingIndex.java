@@ -4,6 +4,7 @@ import com.breynisson.router.jdbc.McpEmbeddingDao;
 import com.breynisson.router.jdbc.model.McpEmbedding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -15,15 +16,21 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 /**
  * Stores and queries dense vector embeddings for files in mcp-resources/.
- * Embeddings are persisted in the MCP_EMBEDDING SQLite table.
- * Falls back gracefully when the EmbeddingClient (Ollama) is unavailable.
+ * Documents are split into chunks (see {@link Chunker}); each chunk gets its own row in the
+ * MCP_EMBEDDING SQLite table. A unit-normalized vector cache is kept in memory for fast
+ * dot-product scoring. Falls back gracefully when the EmbeddingClient (Ollama) is unavailable.
  */
 @Component
 public class EmbeddingIndex {
@@ -32,12 +39,36 @@ public class EmbeddingIndex {
 
     private final EmbeddingClient embeddingClient;
     private final Path mcpResourcesDir;
+    private final String model;
+    private final String documentPrefix;
+    private final String queryPrefix;
+    private final float minScore;
+    private final Map<CacheKey, CachedEmbedding> cache = new ConcurrentHashMap<>();
 
-    public EmbeddingIndex(EmbeddingClient embeddingClient,
-                          @Value("${data.dir:.}") String dataDir) {
+    @Autowired
+    public EmbeddingIndex(
+            EmbeddingClient embeddingClient,
+            @Value("${data.dir:.}") String dataDir,
+            @Value("${ollama.embedding.model:nomic-embed-text}") String model,
+            @Value("${ollama.embedding.document-prefix:search_document:}") String documentPrefix,
+            @Value("${ollama.embedding.query-prefix:search_query:}") String queryPrefix,
+            @Value("${semantic-search.min-score:0.5}") float minScore) {
         this.embeddingClient = embeddingClient;
         this.mcpResourcesDir = Paths.get(dataDir, ResourceReceiver.MCP_RESOURCES_DIR);
+        this.model = model;
+        this.documentPrefix = documentPrefix;
+        this.queryPrefix = queryPrefix;
+        this.minScore = minScore;
     }
+
+    /** Convenience constructor for tests: default model, no task prefixes, no score threshold. */
+    public EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir) {
+        this(embeddingClient, dataDir, "nomic-embed-text", "", "", 0f);
+    }
+
+    private record CacheKey(String filePath, int chunkIndex) {}
+
+    private record CachedEmbedding(String sourceUrl, String chunkText, float[] vector) {}
 
     /** Indexes any mcp-resources files not yet in the embedding table. Runs async at startup. */
     @EventListener(ApplicationReadyEvent.class)
@@ -50,6 +81,9 @@ public class EmbeddingIndex {
     void indexAll() {
         try {
             if (!Files.isDirectory(mcpResourcesDir)) return;
+            reconcileStaleFiles();
+            McpEmbeddingDao.deleteByModelNot(model);
+            loadCacheFromDatabase();
             Set<String> indexed = McpEmbeddingDao.findAllFilePaths();
             try (Stream<Path> walk = Files.walk(mcpResourcesDir)) {
                 walk.filter(Files::isRegularFile).forEach(file -> {
@@ -61,60 +95,106 @@ public class EmbeddingIndex {
         }
     }
 
-    // nomic-embed-text context limit tested at ~4 000 chars; use that as the safe cap
-    private static final int MAX_EMBED_CHARS = 4_000;
+    private void reconcileStaleFiles() throws Exception {
+        Set<String> diskPaths = new HashSet<>();
+        try (Stream<Path> walk = Files.walk(mcpResourcesDir)) {
+            walk.filter(Files::isRegularFile).forEach(f -> diskPaths.add(f.toAbsolutePath().toString()));
+        }
+        for (String dbPath : McpEmbeddingDao.findAllFilePaths()) {
+            if (!diskPaths.contains(dbPath)) {
+                McpEmbeddingDao.deleteByFilePath(dbPath);
+            }
+        }
+    }
 
-    /** Generates and stores an embedding for the given file. No-ops if Ollama is unavailable. */
+    private void loadCacheFromDatabase() {
+        cache.clear();
+        for (McpEmbedding e : McpEmbeddingDao.findAll()) {
+            cache.put(new CacheKey(e.filePath, e.chunkIndex),
+                    new CachedEmbedding(e.sourceUrl, e.chunkText, fromBytes(e.embedding)));
+        }
+    }
+
+    /** Generates and stores embeddings for the given file, one row per chunk. No-ops if Ollama is unavailable. */
     public void indexFile(Path file) {
         try {
             String raw = Files.readString(file, StandardCharsets.UTF_8);
             String sourceUrl = ResourceReceiver.firstLine(raw);
             int nl = raw.indexOf('\n');
             String body = nl >= 0 ? raw.substring(nl + 1) : raw;
-            String toEmbed = body.length() > MAX_EMBED_CHARS ? body.substring(0, MAX_EMBED_CHARS) : body;
-            float[] embedding = embeddingClient.embed(toEmbed);
-            if (embedding == null) return; // Ollama unavailable
-            McpEmbeddingDao.upsert(new McpEmbedding(
-                    file.toAbsolutePath().toString(), sourceUrl, toBytes(embedding), Instant.now().toString()));
-            log.debug("Indexed embedding for {}", file.getFileName());
+            String filePath = file.toAbsolutePath().toString();
+            String indexedAt = Instant.now().toString();
+
+            List<McpEmbedding> rows = new ArrayList<>();
+            List<String> chunks = Chunker.chunk(body);
+            for (int i = 0; i < chunks.size(); i++) {
+                String chunkText = chunks.get(i);
+                String toEmbed = documentPrefix.isEmpty() ? chunkText : documentPrefix + " " + chunkText;
+                float[] embedding = embeddingClient.embed(toEmbed);
+                if (embedding == null) return; // Ollama unavailable — retry the whole file next pass
+                rows.add(new McpEmbedding(filePath, i, sourceUrl, chunkText,
+                        toBytes(normalize(embedding)), model, indexedAt));
+            }
+            for (McpEmbedding row : rows) {
+                McpEmbeddingDao.upsert(row);
+                cache.put(new CacheKey(row.filePath, row.chunkIndex),
+                        new CachedEmbedding(row.sourceUrl, row.chunkText, fromBytes(row.embedding)));
+            }
+            log.debug("Indexed {} chunk(s) for {}", rows.size(), file.getFileName());
         } catch (Exception e) {
             log.warn("Error indexing embedding for {}", file, e);
         }
     }
 
     /**
-     * Embeds the query and returns the top-K most similar files by cosine similarity.
+     * Embeds the query and returns the top-K most similar files by cosine similarity,
+     * deduplicated to each file's single best-scoring chunk.
      * Returns an empty list if Ollama is unavailable or no embeddings are stored.
      */
     public List<ScoredResult> findSimilar(String query, int topK) {
-        float[] queryEmbedding = embeddingClient.embed(query);
-        if (queryEmbedding == null) return List.of();
+        String prefixedQuery = queryPrefix.isEmpty() ? query : queryPrefix + " " + query;
+        float[] rawQueryEmbedding = embeddingClient.embed(prefixedQuery);
+        if (rawQueryEmbedding == null) return List.of();
+        float[] queryVector = normalize(rawQueryEmbedding);
         try {
-            return McpEmbeddingDao.findAll().stream()
-                    .map(e -> new ScoredResult(e.filePath, e.sourceUrl, cosine(queryEmbedding, fromBytes(e.embedding))))
+            List<ScoredResult> scoredChunks = cache.entrySet().stream()
+                    .map(e -> new ScoredResult(
+                            e.getKey().filePath(),
+                            e.getValue().sourceUrl(),
+                            dot(queryVector, e.getValue().vector()),
+                            e.getValue().chunkText()))
+                    .filter(r -> r.score() >= minScore)
                     .sorted(Comparator.comparingDouble(ScoredResult::score).reversed())
-                    .limit(topK)
                     .toList();
+
+            Map<String, ScoredResult> bestPerFile = new LinkedHashMap<>();
+            for (ScoredResult r : scoredChunks) {
+                bestPerFile.putIfAbsent(r.filePath(), r);
+            }
+            return bestPerFile.values().stream().limit(topK).toList();
         } catch (Exception e) {
             log.warn("Embedding search failed", e);
             return List.of();
         }
     }
 
-    public record ScoredResult(String filePath, String sourceUrl, float score) {}
+    public record ScoredResult(String filePath, String sourceUrl, float score, String chunkText) {}
 
-    private static float cosine(float[] a, float[] b) {
+    private static float dot(float[] a, float[] b) {
         int len = Math.min(a.length, b.length);
-        double dot = 0;
-        double magA = 0;
-        double magB = 0;
-        for (int i = 0; i < len; i++) {
-            dot += a[i] * b[i];
-            magA += a[i] * a[i];
-            magB += b[i] * b[i];
-        }
-        double denominator = Math.sqrt(magA) * Math.sqrt(magB);
-        return denominator == 0 ? 0f : (float) (dot / denominator);
+        double sum = 0;
+        for (int i = 0; i < len; i++) sum += a[i] * (double) b[i];
+        return (float) sum;
+    }
+
+    private static float[] normalize(float[] v) {
+        double magnitude = 0;
+        for (float f : v) magnitude += f * (double) f;
+        magnitude = Math.sqrt(magnitude);
+        if (magnitude == 0) return v.clone();
+        float[] out = new float[v.length];
+        for (int i = 0; i < v.length; i++) out[i] = (float) (v[i] / magnitude);
+        return out;
     }
 
     private static byte[] toBytes(float[] floats) {

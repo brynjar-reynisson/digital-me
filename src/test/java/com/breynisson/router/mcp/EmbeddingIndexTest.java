@@ -113,19 +113,143 @@ class EmbeddingIndexTest {
     }
 
     @Test
-    void indexFileTruncatesContentBeyond4000Chars() throws Exception {
+    void indexFileChunksLongContentIntoMultipleEmbedCalls() throws Exception {
         Path file = dataDir.resolve("large.txt");
-        Files.writeString(file, "http://example.com\n" + "x".repeat(10_000));
+        String longBody = "Sentence. ".repeat(500); // ~5000 chars
+        Files.writeString(file, "http://example.com\n" + longBody);
 
-        String[] captured = {null};
+        List<String> embedded = new java.util.ArrayList<>();
         EmbeddingIndex index = new EmbeddingIndex(text -> {
-            captured[0] = text;
+            embedded.add(text);
             return new float[]{1.0f};
         }, dataDir.toString());
 
         index.indexFile(file);
-        assertNotNull(captured[0]);
-        assertTrue(captured[0].length() <= 4_000);
+
+        assertTrue(embedded.size() > 1, "Expected multiple chunks to be embedded for long content");
+        for (String text : embedded) {
+            assertTrue(text.length() <= Chunker.TARGET_CHUNK_CHARS,
+                    "Each embedded chunk should not exceed the target chunk size");
+        }
+        long storedRows = McpEmbeddingDao.findAll().stream()
+                .filter(e -> e.filePath.equals(file.toAbsolutePath().toString())).count();
+        assertEquals(embedded.size(), storedRows);
         cleanup(file);
+    }
+
+    @Test
+    void findSimilarAppliesScoreThreshold() throws Exception {
+        Path dir = Files.createDirectories(dataDir.resolve("mcp-resources").resolve("2026-03"));
+        Path fileA = dir.resolve("a.txt");
+        Path fileB = dir.resolve("b.txt");
+        Files.writeString(fileA, "http://a.com\nrelevant content");
+        Files.writeString(fileB, "http://b.com\nirrelevant content");
+
+        EmbeddingIndex index = new EmbeddingIndex(
+                text -> {
+                    if (text.contains("irrelevant content")) return new float[]{0.0f, 1.0f};
+                    if (text.contains("relevant content")) return new float[]{1.0f, 0.0f};
+                    return new float[]{1.0f, 0.0f}; // query
+                },
+                dataDir.toString(), "nomic-embed-text", "", "", 0.5f);
+
+        index.indexFile(fileA);
+        index.indexFile(fileB);
+
+        List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
+        assertEquals(1, results.size());
+        assertEquals("http://a.com", results.get(0).sourceUrl());
+        cleanup(fileA, fileB);
+    }
+
+    @Test
+    void findSimilarDedupsToBestChunkPerFile() throws Exception {
+        Path dir = Files.createDirectories(dataDir.resolve("mcp-resources").resolve("2026-03"));
+        Path file = dir.resolve("multi.txt");
+        String longBody = "Weak match sentence. ".repeat(150) + "Strong match sentence. ".repeat(150);
+        Files.writeString(file, "http://multi.com\n" + longBody);
+
+        EmbeddingIndex index = new EmbeddingIndex(
+                text -> {
+                    if (text.contains("Strong match")) return new float[]{1.0f, 0.0f};
+                    if (text.contains("Weak match")) return new float[]{0.0f, 1.0f};
+                    return new float[]{1.0f, 0.0f}; // query
+                },
+                dataDir.toString(), "nomic-embed-text", "", "", 0f);
+
+        index.indexFile(file);
+        List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
+
+        assertEquals(1, results.size(), "Multiple chunks of the same file should collapse to one result");
+        assertEquals("http://multi.com", results.get(0).sourceUrl());
+        assertEquals(1.0f, results.get(0).score(), 0.001f);
+        cleanup(file);
+    }
+
+    @Test
+    void indexAllRemovesRowsForDeletedFiles() throws Exception {
+        Path dir = Files.createDirectories(dataDir.resolve("mcp-resources").resolve("2026-03"));
+        Path file = dir.resolve("temp.txt");
+        Files.writeString(file, "http://temp.com\ncontent");
+
+        EmbeddingIndex index = new EmbeddingIndex(text -> new float[]{1.0f}, dataDir.toString());
+        index.indexAll();
+        assertTrue(McpEmbeddingDao.findAllFilePaths().contains(file.toAbsolutePath().toString()));
+
+        Files.delete(file);
+        index.indexAll();
+
+        assertFalse(McpEmbeddingDao.findAllFilePaths().contains(file.toAbsolutePath().toString()));
+        cleanup(file);
+    }
+
+    @Test
+    void indexAllReembedsFilesWhenModelChanges() throws Exception {
+        Path dir = Files.createDirectories(dataDir.resolve("mcp-resources").resolve("2026-03"));
+        Path file = dir.resolve("model-change.txt");
+        Files.writeString(file, "http://model-change.com\ncontent");
+
+        AtomicInteger callCount = new AtomicInteger();
+        EmbeddingIndex oldModelIndex = new EmbeddingIndex(
+                text -> { callCount.incrementAndGet(); return new float[]{1.0f}; },
+                dataDir.toString(), "old-model", "", "", 0f);
+        oldModelIndex.indexAll();
+        assertEquals(1, callCount.get());
+
+        EmbeddingIndex newModelIndex = new EmbeddingIndex(
+                text -> { callCount.incrementAndGet(); return new float[]{1.0f}; },
+                dataDir.toString(), "new-model", "", "", 0f);
+        newModelIndex.indexAll();
+
+        assertEquals(2, callCount.get(), "File should be re-embedded once the configured model changes");
+        cleanup(file);
+    }
+
+    @Test
+    void indexFileAppliesDocumentPrefix() throws Exception {
+        Path file = dataDir.resolve("prefixed.txt");
+        Files.writeString(file, "http://example.com\nhello world");
+
+        String[] captured = {null};
+        EmbeddingIndex index = new EmbeddingIndex(
+                text -> { captured[0] = text; return new float[]{1.0f}; },
+                dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f);
+
+        index.indexFile(file);
+
+        assertEquals("search_document: hello world", captured[0]);
+        cleanup(file);
+    }
+
+    @Test
+    void findSimilarAppliesQueryPrefix() {
+        String[] captured = {null};
+        EmbeddingIndex index = new EmbeddingIndex(
+                text -> { captured[0] = text; return null; },
+                dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f);
+
+        index.findSimilar("hello", 5);
+
+        assertEquals("search_query: hello", captured[0]);
     }
 }
