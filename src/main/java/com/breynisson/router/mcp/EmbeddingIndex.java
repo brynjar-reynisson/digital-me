@@ -10,6 +10,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -36,6 +37,7 @@ import java.util.stream.Stream;
 public class EmbeddingIndex {
 
     private static final Logger log = LoggerFactory.getLogger(EmbeddingIndex.class);
+    private static final String DEFAULT_MODEL = "nomic-embed-text";
 
     private final EmbeddingClient embeddingClient;
     private final Path mcpResourcesDir;
@@ -49,7 +51,7 @@ public class EmbeddingIndex {
     public EmbeddingIndex(
             EmbeddingClient embeddingClient,
             @Value("${data.dir:.}") String dataDir,
-            @Value("${ollama.embedding.model:nomic-embed-text}") String model,
+            @Value("${ollama.embedding.model:" + DEFAULT_MODEL + "}") String model,
             @Value("${ollama.embedding.document-prefix:search_document:}") String documentPrefix,
             @Value("${ollama.embedding.query-prefix:search_query:}") String queryPrefix,
             @Value("${semantic-search.min-score:0.5}") float minScore) {
@@ -63,7 +65,7 @@ public class EmbeddingIndex {
 
     /** Convenience constructor for tests: default model, no task prefixes, no score threshold. */
     public EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir) {
-        this(embeddingClient, dataDir, "nomic-embed-text", "", "", 0f);
+        this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f);
     }
 
     private record CacheKey(String filePath, int chunkIndex) {}
@@ -81,25 +83,28 @@ public class EmbeddingIndex {
     void indexAll() {
         try {
             if (!Files.isDirectory(mcpResourcesDir)) return;
-            reconcileStaleFiles();
+            Set<String> diskPaths = listFilePaths();
+            reconcileStaleFiles(diskPaths);
             McpEmbeddingDao.deleteByModelNot(model);
             loadCacheFromDatabase();
             Set<String> indexed = McpEmbeddingDao.findAllFilePaths();
-            try (Stream<Path> walk = Files.walk(mcpResourcesDir)) {
-                walk.filter(Files::isRegularFile).forEach(file -> {
-                    if (!indexed.contains(file.toAbsolutePath().toString())) indexFile(file);
-                });
+            for (String path : diskPaths) {
+                if (!indexed.contains(path)) indexFile(Paths.get(path));
             }
         } catch (Exception e) {
             log.warn("Error during startup embedding indexing", e);
         }
     }
 
-    private void reconcileStaleFiles() throws Exception {
-        Set<String> diskPaths = new HashSet<>();
+    private Set<String> listFilePaths() throws IOException {
+        Set<String> paths = new HashSet<>();
         try (Stream<Path> walk = Files.walk(mcpResourcesDir)) {
-            walk.filter(Files::isRegularFile).forEach(f -> diskPaths.add(f.toAbsolutePath().toString()));
+            walk.filter(Files::isRegularFile).forEach(f -> paths.add(f.toAbsolutePath().toString()));
         }
+        return paths;
+    }
+
+    private void reconcileStaleFiles(Set<String> diskPaths) {
         for (String dbPath : McpEmbeddingDao.findAllFilePaths()) {
             if (!diskPaths.contains(dbPath)) {
                 McpEmbeddingDao.deleteByFilePath(dbPath);
@@ -126,19 +131,22 @@ public class EmbeddingIndex {
             String indexedAt = Instant.now().toString();
 
             List<McpEmbedding> rows = new ArrayList<>();
+            List<float[]> vectors = new ArrayList<>();
             List<String> chunks = Chunker.chunk(body);
             for (int i = 0; i < chunks.size(); i++) {
                 String chunkText = chunks.get(i);
                 String toEmbed = documentPrefix.isEmpty() ? chunkText : documentPrefix + " " + chunkText;
                 float[] embedding = embeddingClient.embed(toEmbed);
                 if (embedding == null) return; // Ollama unavailable — retry the whole file next pass
-                rows.add(new McpEmbedding(filePath, i, sourceUrl, chunkText,
-                        toBytes(normalize(embedding)), model, indexedAt));
+                float[] normalized = normalize(embedding);
+                rows.add(new McpEmbedding(filePath, i, sourceUrl, chunkText, toBytes(normalized), model, indexedAt));
+                vectors.add(normalized);
             }
-            for (McpEmbedding row : rows) {
+            for (int i = 0; i < rows.size(); i++) {
+                McpEmbedding row = rows.get(i);
                 McpEmbeddingDao.upsert(row);
                 cache.put(new CacheKey(row.filePath, row.chunkIndex),
-                        new CachedEmbedding(row.sourceUrl, row.chunkText, fromBytes(row.embedding)));
+                        new CachedEmbedding(row.sourceUrl, row.chunkText, vectors.get(i)));
             }
             log.debug("Indexed {} chunk(s) for {}", rows.size(), file.getFileName());
         } catch (Exception e) {

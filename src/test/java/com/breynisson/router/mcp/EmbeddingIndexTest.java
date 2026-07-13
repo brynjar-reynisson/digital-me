@@ -211,13 +211,19 @@ class EmbeddingIndexTest {
 
         AtomicInteger callCount = new AtomicInteger();
         EmbeddingIndex oldModelIndex = new EmbeddingIndex(
-                text -> { callCount.incrementAndGet(); return new float[]{1.0f}; },
+                text -> {
+                    callCount.incrementAndGet();
+                    return new float[]{1.0f};
+                },
                 dataDir.toString(), "old-model", "", "", 0f);
         oldModelIndex.indexAll();
         assertEquals(1, callCount.get());
 
         EmbeddingIndex newModelIndex = new EmbeddingIndex(
-                text -> { callCount.incrementAndGet(); return new float[]{1.0f}; },
+                text -> {
+                    callCount.incrementAndGet();
+                    return new float[]{1.0f};
+                },
                 dataDir.toString(), "new-model", "", "", 0f);
         newModelIndex.indexAll();
 
@@ -232,7 +238,10 @@ class EmbeddingIndexTest {
 
         String[] captured = {null};
         EmbeddingIndex index = new EmbeddingIndex(
-                text -> { captured[0] = text; return new float[]{1.0f}; },
+                text -> {
+                    captured[0] = text;
+                    return new float[]{1.0f};
+                },
                 dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f);
 
         index.indexFile(file);
@@ -245,7 +254,10 @@ class EmbeddingIndexTest {
     void findSimilarAppliesQueryPrefix() {
         String[] captured = {null};
         EmbeddingIndex index = new EmbeddingIndex(
-                text -> { captured[0] = text; return null; },
+                text -> {
+                    captured[0] = text;
+                    return null;
+                },
                 dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f);
 
         index.findSimilar("hello", 5);
