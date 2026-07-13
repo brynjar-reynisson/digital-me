@@ -1092,6 +1092,24 @@ In the `EmbeddingIndex` bullet list, replace the `indexFile(path)` and `findSimi
 - `indexAll()` additionally reconciles the table on each run: deletes rows for files no longer on disk, and deletes rows whose `MODEL` doesn't match the currently configured `ollama.embedding.model` (both get re-embedded on the same pass)
 ```
 
+Also replace the `McpEmbeddingDao` and `SemanticSearch` bullet lists (these still describe the pre-chunking single-row-per-file behavior) with:
+
+```
+### `McpEmbeddingDao`
+- `upsert(McpEmbedding)` — INSERT OR REPLACE into `MCP_EMBEDDING`, keyed by `(FILE_PATH, CHUNK_INDEX)`
+- `findAll()` — returns list of `McpEmbedding` (reads FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING columns; MODEL/INDEXED_AT come back null, not needed for search)
+- `findAllFilePaths()` — returns `Set<String>` of already-indexed paths, `SELECT DISTINCT` since multiple chunk rows share a file path
+- `deleteByFilePath(filePath)` — deletes all chunk rows for a file (used to reconcile deleted files)
+- `deleteByModelNot(currentModel)` — deletes rows whose `MODEL` doesn't match the currently configured embedding model
+
+### `SemanticSearch`
+- Spring `@Component` combining `EmbeddingIndex` + `SummarizeClient`
+- `search(query)`: calls `EmbeddingIndex.findSimilar(query, FINAL_RESULT_LIMIT=50)`, filters via `ExclusionRules`, returns list of `{source, name, snippet}` maps with the snippet built from the winning chunk's text
+- `summarize(text)`: delegates to `SummarizeClient`; returns null when Ollama is unavailable
+- `snippet(raw)` (static): strips first line (source URL), normalises whitespace, caps at 2000 chars; appends `<truncated, use fetch tool>` if truncated — used by the keyword-search fallback, which still reads whole files
+- `chunkSnippet(chunkText)` (static): same normalisation/truncation as `snippet()` but without stripping a header line, since chunk text has no source-URL header — used by semantic search results
+```
+
 - [ ] **Step 8: Update `docs/mcp.md`**
 
 In the "Search tool behaviour" section, update point 3 to:

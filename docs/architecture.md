@@ -75,15 +75,18 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - `indexAll()` additionally reconciles the table on each run: deletes rows for files no longer on disk, and deletes rows whose `MODEL` doesn't match the currently configured `ollama.embedding.model` (both get re-embedded on the same pass)
 
 ### `McpEmbeddingDao`
-- `upsert(McpEmbedding)` — INSERT OR REPLACE into `MCP_EMBEDDING`
-- `findAll()` — returns list of `McpEmbedding` (reads FILE_PATH, SOURCE_URL, EMBEDDING columns only)
-- `findAllFilePaths()` — returns `Set<String>` of already-indexed paths (used by `indexAll()` to skip re-indexing)
+- `upsert(McpEmbedding)` — INSERT OR REPLACE into `MCP_EMBEDDING`, keyed by `(FILE_PATH, CHUNK_INDEX)`
+- `findAll()` — returns list of `McpEmbedding` (reads FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING columns; MODEL/INDEXED_AT come back null, not needed for search)
+- `findAllFilePaths()` — returns `Set<String>` of already-indexed paths, `SELECT DISTINCT` since multiple chunk rows share a file path
+- `deleteByFilePath(filePath)` — deletes all chunk rows for a file (used to reconcile deleted files)
+- `deleteByModelNot(currentModel)` — deletes rows whose `MODEL` doesn't match the currently configured embedding model
 
 ### `SemanticSearch`
 - Spring `@Component` combining `EmbeddingIndex` + `SummarizeClient`
-- `search(query)`: calls `EmbeddingIndex.findSimilar(query, 10)`, filters via `ExclusionRules`, returns list of `{source, name, snippet}` maps
+- `search(query)`: calls `EmbeddingIndex.findSimilar(query, FINAL_RESULT_LIMIT=50)`, filters via `ExclusionRules`, returns list of `{source, name, snippet}` maps with the snippet built from the winning chunk's text
 - `summarize(text)`: delegates to `SummarizeClient`; returns null when Ollama is unavailable
-- `snippet(raw)` (static): strips first line (source URL), normalises whitespace, caps at 2000 chars; appends `<truncated, use fetch tool>` if truncated
+- `snippet(raw)` (static): strips first line (source URL), normalises whitespace, caps at 2000 chars; appends `<truncated, use fetch tool>` if truncated — used by the keyword-search fallback, which still reads whole files
+- `chunkSnippet(chunkText)` (static): same normalisation/truncation as `snippet()` but without stripping a header line, since chunk text has no source-URL header — used by semantic search results
 
 ### `ExclusionRules`
 - Static utility; `isExcluded(url)` returns true for: null, localhost:3001, localhost:8080, google domains, islandsbanki, facebook.com, quora.com, meta.com/is
