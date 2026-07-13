@@ -12,23 +12,29 @@ public class McpEmbeddingDao {
 
     public static Set<String> findAllFilePaths() {
         return Set.copyOf(DatabaseAdapter.selectList(
-                "SELECT FILE_PATH FROM " + TABLE,
+                "SELECT DISTINCT FILE_PATH FROM " + TABLE,
                 DatabaseAdapter.RESULT_SET_STRING_TRANSFORM));
     }
 
     public static List<McpEmbedding> findAll() {
         return DatabaseAdapter.selectList(
-                "SELECT FILE_PATH, SOURCE_URL, EMBEDDING FROM " + TABLE,
+                "SELECT FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING FROM " + TABLE,
                 TRANSFORM);
     }
 
     public static void upsert(McpEmbedding embedding) {
         DatabaseAdapter.runPreparedStatement(
-                "INSERT OR REPLACE INTO " + TABLE + " (FILE_PATH, SOURCE_URL, EMBEDDING, INDEXED_AT) VALUES (?, ?, ?, ?)",
-                embedding.filePath, embedding.sourceUrl, embedding.embedding, embedding.indexedAt);
+                "INSERT OR REPLACE INTO " + TABLE
+                        + " (FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING, MODEL, INDEXED_AT) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                embedding.filePath, embedding.chunkIndex, embedding.sourceUrl, embedding.chunkText,
+                embedding.embedding, embedding.model, embedding.indexedAt);
     }
 
     public static void deleteByFilePath(String filePath) {
         DatabaseAdapter.runPreparedStatement("DELETE FROM " + TABLE + " WHERE FILE_PATH = ?", filePath);
+    }
+
+    public static void deleteByModelNot(String currentModel) {
+        DatabaseAdapter.runPreparedStatement("DELETE FROM " + TABLE + " WHERE MODEL <> ?", currentModel);
     }
 }

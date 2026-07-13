@@ -10,14 +10,21 @@ import java.util.List;
 public class McpEmbedding {
 
     public final String filePath;
+    public final int chunkIndex;
     public final String sourceUrl;
+    public final String chunkText;
     public final byte[] embedding;
+    public final String model;
     public final String indexedAt;
 
-    public McpEmbedding(String filePath, String sourceUrl, byte[] embedding, String indexedAt) {
+    public McpEmbedding(String filePath, int chunkIndex, String sourceUrl, String chunkText,
+                         byte[] embedding, String model, String indexedAt) {
         this.filePath = filePath;
+        this.chunkIndex = chunkIndex;
         this.sourceUrl = sourceUrl;
+        this.chunkText = chunkText;
         this.embedding = embedding;
+        this.model = model;
         this.indexedAt = indexedAt;
     }
 
@@ -28,10 +35,13 @@ public class McpEmbedding {
             List<McpEmbedding> list = new ArrayList<>();
             while (rset.next()) {
                 list.add(new McpEmbedding(
-                        rset.getString(1),
-                        rset.getString(2),
-                        rset.getBytes(3),
-                        null)); // INDEXED_AT not needed for search
+                        rset.getString(1),   // FILE_PATH
+                        rset.getInt(2),       // CHUNK_INDEX
+                        rset.getString(3),   // SOURCE_URL
+                        rset.getString(4),   // CHUNK_TEXT
+                        rset.getBytes(5),    // EMBEDDING
+                        null,                // MODEL not needed for search
+                        null));              // INDEXED_AT not needed for search
             }
             return list;
         }

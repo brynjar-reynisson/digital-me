@@ -35,6 +35,10 @@ class McpEmbeddingDaoTest {
         return buf.array();
     }
 
+    private static McpEmbedding embedding(String path, int chunkIndex, String sourceUrl, String chunkText, String model) {
+        return new McpEmbedding(path, chunkIndex, sourceUrl, chunkText, embeddingBytes(1.0f, 2.0f), model, "2026-01-01T00:00:00Z");
+    }
+
     private static void cleanup(String filePath) {
         DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING WHERE FILE_PATH='" + filePath + "'");
     }
@@ -42,7 +46,7 @@ class McpEmbeddingDaoTest {
     @Test
     void upsertAndFindAll() {
         String path = "/tmp/dao-test-1.txt";
-        McpEmbeddingDao.upsert(new McpEmbedding(path, "http://example.com/1", embeddingBytes(1.0f, 2.0f), "2026-01-01T00:00:00Z"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/1", "chunk text", "nomic-embed-text"));
 
         List<McpEmbedding> all = McpEmbeddingDao.findAll();
         assertTrue(all.stream().anyMatch(e -> e.filePath.equals(path) && e.sourceUrl.equals("http://example.com/1")));
@@ -50,20 +54,22 @@ class McpEmbeddingDaoTest {
     }
 
     @Test
-    void findAllFilePathsReturnsStoredPath() {
+    void findAllFilePathsReturnsDistinctPathAcrossChunks() {
         String path = "/tmp/dao-test-2.txt";
-        McpEmbeddingDao.upsert(new McpEmbedding(path, "http://example.com/2", embeddingBytes(1.0f), "2026-01-01T00:00:00Z"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/2", "chunk 0", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://example.com/2", "chunk 1", "nomic-embed-text"));
 
         Set<String> paths = McpEmbeddingDao.findAllFilePaths();
         assertTrue(paths.contains(path));
+        assertEquals(1, paths.stream().filter(p -> p.equals(path)).count());
         cleanup(path);
     }
 
     @Test
-    void upsertReplacesPreviousEntry() {
+    void upsertReplacesSameChunkIndex() {
         String path = "/tmp/dao-test-3.txt";
-        McpEmbeddingDao.upsert(new McpEmbedding(path, "http://old.com", embeddingBytes(1.0f), "2026-01-01T00:00:00Z"));
-        McpEmbeddingDao.upsert(new McpEmbedding(path, "http://new.com", embeddingBytes(2.0f), "2026-01-02T00:00:00Z"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://old.com", "old text", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://new.com", "new text", "nomic-embed-text"));
 
         List<McpEmbedding> matching = McpEmbeddingDao.findAll().stream()
                 .filter(e -> e.filePath.equals(path)).toList();
@@ -73,15 +79,54 @@ class McpEmbeddingDaoTest {
     }
 
     @Test
+    void differentChunkIndexesForSameFileAreSeparateRows() {
+        String path = "/tmp/dao-test-5.txt";
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/5", "chunk 0", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://example.com/5", "chunk 1", "nomic-embed-text"));
+
+        List<McpEmbedding> matching = McpEmbeddingDao.findAll().stream()
+                .filter(e -> e.filePath.equals(path)).toList();
+        assertEquals(2, matching.size());
+        cleanup(path);
+    }
+
+    @Test
     void findAllEmbeddingBytesRoundTrip() {
         String path = "/tmp/dao-test-4.txt";
         float[] original = {0.1f, 0.5f, -0.3f};
-        McpEmbeddingDao.upsert(new McpEmbedding(path, "http://example.com/4", embeddingBytes(original), "2026-01-01T00:00:00Z"));
+        McpEmbeddingDao.upsert(new McpEmbedding(path, 0, "http://example.com/4", "chunk text",
+                embeddingBytes(original), "nomic-embed-text", "2026-01-01T00:00:00Z"));
 
         McpEmbedding stored = McpEmbeddingDao.findAll().stream()
                 .filter(e -> e.filePath.equals(path)).findFirst().orElseThrow();
         ByteBuffer buf = ByteBuffer.wrap(stored.embedding);
         assertArrayEquals(original, new float[]{buf.getFloat(), buf.getFloat(), buf.getFloat()}, 0.0001f);
         cleanup(path);
+    }
+
+    @Test
+    void deleteByFilePathRemovesAllChunksForFile() {
+        String path = "/tmp/dao-test-6.txt";
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/6", "chunk 0", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://example.com/6", "chunk 1", "nomic-embed-text"));
+
+        McpEmbeddingDao.deleteByFilePath(path);
+
+        assertTrue(McpEmbeddingDao.findAll().stream().noneMatch(e -> e.filePath.equals(path)));
+    }
+
+    @Test
+    void deleteByModelNotRemovesOnlyMismatchedRows() {
+        String keepPath = "/tmp/dao-test-7-keep.txt";
+        String dropPath = "/tmp/dao-test-7-drop.txt";
+        McpEmbeddingDao.upsert(embedding(keepPath, 0, "http://keep.com", "chunk", "current-model"));
+        McpEmbeddingDao.upsert(embedding(dropPath, 0, "http://drop.com", "chunk", "old-model"));
+
+        McpEmbeddingDao.deleteByModelNot("current-model");
+
+        Set<String> remaining = McpEmbeddingDao.findAllFilePaths();
+        assertTrue(remaining.contains(keepPath));
+        assertFalse(remaining.contains(dropPath));
+        cleanup(keepPath);
     }
 }
