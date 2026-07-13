@@ -488,7 +488,7 @@ git -C "C:\Users\Lenovo\IdeaProjects\digital-me" commit -m "feat: chunk-key MCP_
 
 **Interfaces:**
 - Consumes: `Chunker.chunk(String) -> List<String>` (Task 1); `McpEmbedding` 7-arg constructor, `McpEmbeddingDao.findAllFilePaths/findAll/upsert/deleteByFilePath/deleteByModelNot` (Task 2).
-- Produces: `EmbeddingIndex(EmbeddingClient, String dataDir, String model, String documentPrefix, String queryPrefix, float minScore)` (primary, `@Autowired`); `EmbeddingIndex(EmbeddingClient, String dataDir)` (package-private test convenience: model=`"nomic-embed-text"`, prefixes=`""`, minScore=`0f`); `void indexAll()`; `void indexFile(Path)`; `List<ScoredResult> findSimilar(String query, int topK)`; `record ScoredResult(String filePath, String sourceUrl, float score, String chunkText)`. Consumed by Task 4 (`SemanticSearch`) and existing `McpServerConfig`/tests (constructor signature preserved via the convenience overload, so those call sites need no changes).
+- Produces: `EmbeddingIndex(EmbeddingClient, String dataDir, String model, String documentPrefix, String queryPrefix, float minScore)` (primary, `@Autowired`); `EmbeddingIndex(EmbeddingClient, String dataDir)` (public test convenience — must be `public`, not package-private, since `FileChangeWatcherTest` and `DefaultDigitalMeStorageTest` construct it from other packages: model=`"nomic-embed-text"`, prefixes=`""`, minScore=`0f`); `void indexAll()`; `void indexFile(Path)`; `List<ScoredResult> findSimilar(String query, int topK)`; `record ScoredResult(String filePath, String sourceUrl, float score, String chunkText)`. Consumed by Task 4 (`SemanticSearch`) and existing `McpServerConfig`/`FileChangeWatcherTest`/`DefaultDigitalMeStorageTest`/tests (constructor signature preserved via the convenience overload, so those call sites need no changes).
 
 - [ ] **Step 1: Replace the truncation test and add new failing tests in `EmbeddingIndexTest`**
 
@@ -530,8 +530,10 @@ Replace the existing `indexFileTruncatesContentBeyond4000Chars` test with the fo
 
         EmbeddingIndex index = new EmbeddingIndex(
                 text -> {
-                    if (text.contains("relevant content")) return new float[]{1.0f, 0.0f};
+                    // Check "irrelevant" first: "irrelevant content".contains("relevant content") is
+                    // also true (it's a substring), so the more specific check must come first.
                     if (text.contains("irrelevant content")) return new float[]{0.0f, 1.0f};
+                    if (text.contains("relevant content")) return new float[]{1.0f, 0.0f};
                     return new float[]{1.0f, 0.0f}; // query
                 },
                 dataDir.toString(), "nomic-embed-text", "", "", 0.5f);
@@ -710,8 +712,12 @@ public class EmbeddingIndex {
         this.minScore = minScore;
     }
 
-    /** Convenience constructor for tests: default model, no task prefixes, no score threshold. */
-    EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir) {
+    /**
+     * Convenience constructor for tests: default model, no task prefixes, no score threshold.
+     * Public (not package-private) because {@code FileChangeWatcherTest} and
+     * {@code DefaultDigitalMeStorageTest} construct EmbeddingIndex from other packages.
+     */
+    public EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir) {
         this(embeddingClient, dataDir, "nomic-embed-text", "", "", 0f);
     }
 
