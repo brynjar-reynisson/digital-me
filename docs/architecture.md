@@ -93,10 +93,18 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - Applied in both `SemanticSearch.search()` and `McpServerConfig` keyword search to filter noise
 
 ### `SummarizeClient` (functional interface)
-- Single method: `String summarize(String text)` — returns `null` when Ollama is unavailable
-- Used as a lambda in tests; `OllamaSummarizeClient` is the production implementation
+- Single method: `String summarize(String text)` — returns `null` when the backend is unavailable
+- Used as a lambda in tests; two production implementations exist, selected via `summarize.provider` (`deepseek` default, `matchIfMissing = true`; or `ollama`), each `@ConditionalOnProperty`-gated so exactly one is registered as a Spring bean
+
+### `DeepseekSummarizeClient`
+- Default summarization backend; shells out to the `opencode` CLI: `opencode run --model <model> --format json "<prompt>"` (model configurable via `opencode.summarize.model`, default `deepseek/deepseek-v4-flash`)
+- Sends the same "Summarize in 2-3 sentences" prompt as `OllamaSummarizeClient`
+- Parses the CLI's newline-delimited JSON stdout via the static `extractSummary()` method, taking the last `"type":"text"` event's `part.text`
+- Times out after `opencode.summarize.timeout-seconds` (default 60s), destroying the process and returning `null`
+- `isAvailable()` runs `opencode --version` and checks for a zero exit code
 
 ### `OllamaSummarizeClient`
+- Alternate summarization backend, enabled via `summarize.provider=ollama`
 - Posts to `http://localhost:11434/api/generate` with model configurable via `ollama.summarize.model` (default: `llama3.2`)
 - Sends a "Summarize in 2-3 sentences" prompt; 120-second timeout
 - Returns `null` on HTTP error or connection failure
