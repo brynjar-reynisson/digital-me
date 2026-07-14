@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Calls the {@code opencode} CLI (routed to DeepSeek) to produce a short summary.
@@ -45,13 +46,16 @@ public class DeepseekSummarizeClient implements SummarizeClient {
             Process process = new ProcessBuilder(opencodeCommand, "run", "--model", model, "--format", "json", prompt)
                     .redirectErrorStream(true)
                     .start();
-            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            AtomicReference<String> outputRef = new AtomicReference<>("");
+            Thread reader = startOutputReader(process, outputRef);
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
                 log.warn("opencode summarize timed out after {}s", timeoutSeconds);
                 return null;
             }
+            reader.join(TimeUnit.SECONDS.toMillis(5));
+            String output = outputRef.get();
             if (process.exitValue() != 0) {
                 log.warn("opencode summarize exited with {}: {}", process.exitValue(), output);
                 return null;
@@ -71,17 +75,32 @@ public class DeepseekSummarizeClient implements SummarizeClient {
             Process process = new ProcessBuilder(opencodeCommand, "--version")
                     .redirectErrorStream(true)
                     .start();
-            process.getInputStream().readAllBytes();
+            AtomicReference<String> outputRef = new AtomicReference<>("");
+            Thread reader = startOutputReader(process, outputRef);
             boolean finished = process.waitFor(5, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
                 return false;
             }
+            reader.join(TimeUnit.SECONDS.toMillis(2));
             return process.exitValue() == 0;
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             return false;
         }
+    }
+
+    private static Thread startOutputReader(Process process, AtomicReference<String> outputRef) {
+        Thread reader = new Thread(() -> {
+            try {
+                outputRef.set(new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+            } catch (IOException ignored) {
+                // process was destroyed or its stream closed abruptly; leave output as empty
+            }
+        });
+        reader.setDaemon(true);
+        reader.start();
+        return reader;
     }
 
     /** Parses opencode's `--format json` NDJSON stdout, returning the last "text" part's content, or null if none. */
