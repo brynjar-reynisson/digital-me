@@ -23,6 +23,7 @@ DIGITAL_ME_URL = "http://localhost:8080/addContent"
 SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
 BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
 SUBPAGE_CAPABLE_BROWSERS = {"chrome", "edge"}
+SUBPAGE_GATED_SITES = {"quora", "linkedin"}
 
 
 def detect_site(window_title: str) -> tuple[str | None, str | None, str]:
@@ -124,6 +125,10 @@ def main() -> None:
     pagename, browser, window_title = detect_site(title)
     if pagename is None:
         return
+    if pagename in SUBPAGE_GATED_SITES and browser in SUBPAGE_CAPABLE_BROWSERS:
+        url = get_address_bar_url(hwnd)
+        if url is not None and has_subpath(url):
+            return
     bmp_bytes = take_screenshot_bmp(hwnd)
     current_hash = hash_bytes(bmp_bytes)
 
