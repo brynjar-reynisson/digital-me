@@ -98,6 +98,45 @@ uiautomation
 
 ---
 
+## Addendum: exemptions for dynamically-loaded pages
+
+Discovered during manual verification of Task 4: some pages that look like "sub-pages" by the
+`.com/` heuristic actually need to keep being captured, because their content loads dynamically
+and the Chrome extension's content script can't see it — the OS-level screenshot+OCR path is the
+only way this content gets indexed at all:
+
+- **LinkedIn feed** (`linkedin.com/feed/`) — this is a logged-in user's real "home" (LinkedIn
+  redirects the bare root here), not a sub-page in the sense this feature was meant to gate. It
+  must never be skipped.
+- **Quora topic pages** (`quora.com/topic/*`) — e.g. `quora.com/topic/Artificial-Intelligence` —
+  must never be skipped, regardless of `has_subpath()`'s verdict.
+
+### `is_subpage_exempt(url)` (new, pure)
+
+```python
+LINKEDIN_FEED_PATTERN = re.compile(r"linkedin\.com/feed/?(?:[?#]|$)")
+QUORA_TOPIC_PATTERN = re.compile(r"quora\.com/topic/")
+
+def is_subpage_exempt(url: str) -> bool:
+    return bool(LINKEDIN_FEED_PATTERN.search(url)) or bool(QUORA_TOPIC_PATTERN.search(url))
+```
+
+The LinkedIn pattern requires `/feed` to be followed by `/`, `?`, `#`, or end-of-string — a plain
+substring check (`"linkedin.com/feed" in url`) would also match `linkedin.com/feedback` or similar,
+which is a real sub-page and should still be gated.
+
+### Updated `main()` gating condition
+
+```python
+if pagename in SUBPAGE_GATED_SITES and browser in SUBPAGE_CAPABLE_BROWSERS:
+    url = get_address_bar_url(hwnd)
+    if url is not None and has_subpath(url) and not is_subpage_exempt(url):
+        return
+```
+
+`has_subpath()` itself is unchanged — the exemption is a separate override checked alongside it,
+not a modification to the `.com/` truth table (which stays correct for the general case).
+
 ## Out of Scope
 
 - Firefox, Opera, Brave path gating (title-only gating unchanged for these).
