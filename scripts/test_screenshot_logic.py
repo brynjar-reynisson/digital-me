@@ -6,6 +6,8 @@ from pathlib import Path
 
 # Inline the two pure functions so this file has no external imports
 SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
+# Order matters: "chrome" must precede "edge" so titles like "...share knowledge -
+# Google Chrome" match "chrome" first, since "knowledge" itself contains "edge".
 BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
 LINKEDIN_FEED_PATTERN = re.compile(r"linkedin\.com/feed/?(?:[?#]|$)")
 QUORA_TOPIC_PATTERN = re.compile(r"quora\.com/topic/")

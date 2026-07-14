@@ -22,6 +22,8 @@ from winsdk.windows.storage.streams import DataWriter, InMemoryRandomAccessStrea
 STATE_FILE = Path(__file__).parent / "screenshot-capture-state.json"
 DIGITAL_ME_URL = "http://localhost:8080/addContent"
 SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
+# Order matters: "chrome" must precede "edge" so titles like "...share knowledge -
+# Google Chrome" match "chrome" first, since "knowledge" itself contains "edge".
 BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
 SUBPAGE_CAPABLE_BROWSERS = {"chrome", "edge"}
 SUBPAGE_GATED_SITES = {"quora", "linkedin"}
