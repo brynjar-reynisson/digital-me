@@ -3,6 +3,7 @@ import datetime
 import hashlib
 import io
 import json
+import re
 from pathlib import Path
 
 import mss
@@ -75,6 +76,14 @@ def has_subpath(url: str) -> bool:
     return len(url[idx + len(".com/"):]) > 0
 
 
+LINKEDIN_FEED_PATTERN = re.compile(r"linkedin\.com/feed/?(?:[?#]|$)")
+QUORA_TOPIC_PATTERN = re.compile(r"quora\.com/topic/")
+
+
+def is_subpage_exempt(url: str) -> bool:
+    return bool(LINKEDIN_FEED_PATTERN.search(url)) or bool(QUORA_TOPIC_PATTERN.search(url))
+
+
 def load_state() -> dict:
     if STATE_FILE.exists():
         try:
@@ -127,7 +136,7 @@ def main() -> None:
         return
     if pagename in SUBPAGE_GATED_SITES and browser in SUBPAGE_CAPABLE_BROWSERS:
         url = get_address_bar_url(hwnd)
-        if url is not None and has_subpath(url):
+        if url is not None and has_subpath(url) and not is_subpage_exempt(url):
             return
     bmp_bytes = take_screenshot_bmp(hwnd)
     current_hash = hash_bytes(bmp_bytes)
