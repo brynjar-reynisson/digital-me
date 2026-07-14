@@ -27,6 +27,7 @@ SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora
 BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
 UIA_CAPABLE_BROWSERS = {"chrome", "edge"}
 SUBPAGE_GATED_SITES = {"quora", "linkedin"}
+CROP_CONTENT_SITES = {"quora", "linkedin", "facebook"}
 CONTENT_CROP_LEFT_PCT = 0.20
 CONTENT_CROP_RIGHT_PCT = 0.20
 MIN_CROP_WIDTH = 100
@@ -65,12 +66,14 @@ def get_address_bar_url(hwnd: int) -> str | None:
         return None
 
 
-def take_screenshot_bmp(hwnd: int) -> bytes:
+def take_screenshot_bmp(hwnd: int, crop_box: tuple[int, int, int, int] | None = None) -> bytes:
     left, top, right, bottom = win32gui.GetWindowRect(hwnd)
     region = {"left": left, "top": top, "width": right - left, "height": bottom - top}
     with mss.mss() as sct:
         img = sct.grab(region)
         pil = Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
+        if crop_box is not None:
+            pil = pil.crop(crop_box)
         buf = io.BytesIO()
         pil.save(buf, format="BMP")
         return buf.getvalue()
@@ -229,7 +232,10 @@ def main() -> None:
         url = get_address_bar_url(hwnd)
         if url is not None and has_subpath(url) and not is_subpage_exempt(url):
             return
-    bmp_bytes = take_screenshot_bmp(hwnd)
+    crop_box = None
+    if pagename in CROP_CONTENT_SITES and browser in UIA_CAPABLE_BROWSERS:
+        crop_box = get_main_content_rect(hwnd)
+    bmp_bytes = take_screenshot_bmp(hwnd, crop_box)
     current_hash = hash_bytes(bmp_bytes)
 
     state = load_state()
