@@ -211,7 +211,7 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
 
 
-async def _ocr_async(bmp_bytes: bytes) -> str:
+async def _decode_to_bitmap(bmp_bytes: bytes):
     stream = InMemoryRandomAccessStream()
     writer = DataWriter(stream)
     writer.write_bytes(bmp_bytes)
@@ -220,9 +220,13 @@ async def _ocr_async(bmp_bytes: bytes) -> str:
     stream.seek(0)
     decoder = await BitmapDecoder.create_async(stream)
     # OcrEngine requires Bgra8 / Premultiplied format
-    bitmap = await decoder.get_software_bitmap_async(
+    return await decoder.get_software_bitmap_async(
         BitmapPixelFormat.BGRA8, BitmapAlphaMode.PREMULTIPLIED
     )
+
+
+async def _ocr_async(bmp_bytes: bytes) -> str:
+    bitmap = await _decode_to_bitmap(bmp_bytes)
     engine = OcrEngine.try_create_from_user_profile_languages()
     if engine is None:
         return ""
@@ -232,6 +236,34 @@ async def _ocr_async(bmp_bytes: bytes) -> str:
 
 def run_ocr(bmp_bytes: bytes) -> str:
     return asyncio.run(_ocr_async(bmp_bytes))
+
+
+async def _ocr_lines_async(bmp_bytes: bytes) -> list[tuple[float, float, str]]:
+    bitmap = await _decode_to_bitmap(bmp_bytes)
+    engine = OcrEngine.try_create_from_user_profile_languages()
+    if engine is None:
+        return []
+    result = await engine.recognize_async(bitmap)
+    lines = []
+    for line in result.lines:
+        words = list(line.words)
+        if not words:
+            continue
+        left = min(w.bounding_rect.x for w in words)
+        top = min(w.bounding_rect.y for w in words)
+        lines.append((left, top, line.text))
+    return lines
+
+
+def run_ocr_lines(bmp_bytes: bytes) -> list[tuple[float, float, str]]:
+    return asyncio.run(_ocr_lines_async(bmp_bytes))
+
+
+def run_ocr_filtered(bmp_bytes: bytes) -> str:
+    lines = run_ocr_lines(bmp_bytes)
+    threshold = find_gap_threshold([left for left, _, _ in lines])
+    kept = filter_and_sort_lines(lines, threshold)
+    return "\n".join(text for _, _, text in kept)
 
 
 def send_to_digital_me(source: str, name: str, content: str) -> None:
