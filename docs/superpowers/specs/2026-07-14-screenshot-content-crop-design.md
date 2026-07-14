@@ -149,11 +149,12 @@ Broad exception catch is intentional, matching `get_address_bar_url`'s existing 
 Live verification against the real target sites (with corrected constants and the render-host
 anchoring, see below) found that a `main` landmark, when present, doesn't always mean what this
 feature needs it to mean. On LinkedIn's feed, the `main` landmark spans the *entire* three-column
-layout (left profile card, center feed, right "Add to your feed" column) — about 96% of the
-document's width — because LinkedIn wraps the whole page body in one `<main>` element rather than
-scoping it to just the feed column. Using it verbatim produced a screenshot barely narrower than the
-uncropped window, defeating the feature's purpose. Facebook's `main` landmark, by contrast, correctly
-scopes to just the center feed column (about 49% of document width) and produces an excellent crop.
+layout (left profile card, center feed, right "Add to your feed" column) — 100% of the document's
+width (landmark width equal to `doc_rect`'s own width) — because LinkedIn wraps the whole page body
+in one `<main>` element rather than scoping it to just the feed column. Using it verbatim produced a
+screenshot barely narrower than the uncropped window, defeating the feature's purpose. Facebook's
+`main` landmark, by contrast, correctly scopes to just the center feed column (51% of document width)
+and produces an excellent crop.
 
 Fix: `landmark_too_wide(landmark_rect, doc_rect)` (new, pure) rejects a landmark whose width exceeds
 `MAX_LANDMARK_WIDTH_FRACTION = 0.80` (80%) of the document's width, treating it as "not useful" and
