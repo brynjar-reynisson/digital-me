@@ -158,7 +158,7 @@ def find_main_landmark(doc_control) -> tuple[int, int, int, int] | None:
     return None
 
 
-def get_main_content_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+def get_main_content_rect(hwnd: int) -> tuple[tuple[int, int, int, int] | None, bool]:
     try:
         # win32gui.GetWindowRect and UIA's BoundingRectangle are assumed to report the same
         # pixel coordinate space -- true for a single-monitor or uniform-DPI setup (verified
@@ -178,16 +178,17 @@ def get_main_content_rect(hwnd: int) -> tuple[int, int, int, int] | None:
         render_host = window.PaneControl(ClassName="Chrome_RenderWidgetHostHWND")
         doc = render_host.DocumentControl() if render_host.Exists(0, 0) else window.DocumentControl()
         if not doc.Exists(0, 0):
-            return None
+            return None, False
         r = doc.BoundingRectangle
         doc_rect = (r.left, r.top, r.right, r.bottom)
         landmark_rect = find_main_landmark(doc)
         if landmark_rect is not None and landmark_too_wide(landmark_rect, doc_rect):
             landmark_rect = None
-        content_rect = landmark_rect or percentage_fallback_rect(doc_rect)
-        return content_rect_to_crop_box(content_rect, window_rect)
+        if landmark_rect is not None:
+            return content_rect_to_crop_box(landmark_rect, window_rect), False
+        return content_rect_to_crop_box(doc_rect, window_rect), True
     except Exception:
-        return None
+        return None, False
 
 
 LINKEDIN_FEED_PATTERN = re.compile(r"linkedin\.com/feed/?(?:[?#]|$)")
@@ -285,8 +286,9 @@ def main() -> None:
         if url is not None and has_subpath(url) and not is_subpage_exempt(url):
             return
     crop_box = None
+    needs_line_filtering = False
     if pagename in CROP_CONTENT_SITES and browser in UIA_CAPABLE_BROWSERS:
-        crop_box = get_main_content_rect(hwnd)
+        crop_box, needs_line_filtering = get_main_content_rect(hwnd)
     bmp_bytes = take_screenshot_bmp(hwnd, crop_box)
     current_hash = hash_bytes(bmp_bytes)
 
@@ -294,7 +296,10 @@ def main() -> None:
     if current_hash == state.get("last_hash"):
         return
 
-    ocr_text = run_ocr(bmp_bytes).strip().replace("\r\n", "\n")
+    if needs_line_filtering:
+        ocr_text = run_ocr_filtered(bmp_bytes).strip().replace("\r\n", "\n")
+    else:
+        ocr_text = run_ocr(bmp_bytes).strip().replace("\r\n", "\n")
 
     if ocr_text == state.get("last_sent_text"):
         state["last_hash"] = current_hash
