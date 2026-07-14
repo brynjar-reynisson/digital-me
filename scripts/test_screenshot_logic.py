@@ -34,17 +34,8 @@ def has_subpath(url: str) -> bool:
 def is_subpage_exempt(url: str) -> bool:
     return bool(LINKEDIN_FEED_PATTERN.search(url)) or bool(QUORA_TOPIC_PATTERN.search(url))
 
-CONTENT_CROP_LEFT_PCT = 0.20
-CONTENT_CROP_RIGHT_PCT = 0.20
 MIN_CROP_WIDTH = 100
 MIN_CROP_HEIGHT = 100
-
-def percentage_fallback_rect(doc_rect: tuple) -> tuple:
-    left, top, right, bottom = doc_rect
-    width = right - left
-    new_left = left + int(width * CONTENT_CROP_LEFT_PCT)
-    new_right = right - int(width * CONTENT_CROP_RIGHT_PCT)
-    return (new_left, top, new_right, bottom)
 
 def content_rect_to_crop_box(content_rect: tuple, window_rect: tuple):
     c_left, c_top, c_right, c_bottom = content_rect
@@ -56,6 +47,25 @@ def content_rect_to_crop_box(content_rect: tuple, window_rect: tuple):
     if box_right - box_left < MIN_CROP_WIDTH or box_bottom - box_top < MIN_CROP_HEIGHT:
         return None
     return (box_left, box_top, box_right, box_bottom)
+
+MIN_LINES_FOR_SPLIT = 4
+MIN_GAP_FOR_SPLIT_PX = 80.0
+
+def find_gap_threshold(lefts: list) -> float:
+    if len(lefts) < MIN_LINES_FOR_SPLIT:
+        return None
+    distinct = sorted(set(lefts))
+    if len(distinct) < 2:
+        return None
+    for a, b in zip(distinct, distinct[1:]):
+        gap = b - a
+        if gap >= MIN_GAP_FOR_SPLIT_PX:
+            return (a + b) / 2
+    return None
+
+def filter_and_sort_lines(lines: list, threshold) -> list:
+    kept = [line for line in lines if threshold is None or line[0] >= threshold]
+    return sorted(kept, key=lambda line: (line[1], line[0]))
 
 MAX_LANDMARK_WIDTH_FRACTION = 0.80
 
@@ -155,11 +165,47 @@ def test_is_subpage_exempt_quora_question_not_exempt():
 def test_is_subpage_exempt_neither_site():
     assert is_subpage_exempt("https://www.facebook.com/topic/") is False
 
-def test_percentage_fallback_rect_default():
-    assert percentage_fallback_rect((0, 0, 1000, 800)) == (200, 0, 800, 800)
+def test_find_gap_threshold_real_data_picks_first_gap_not_largest():
+    lefts = [91.0, 101.0, 106.0, 133.0, 134.0, 281.0, 282.0, 337.0, 345.0, 388.0,
+              573.0, 615.0, 627.0, 874.0, 967.0, 1060.0, 1305.0]
+    # Real captured Quora line lefts. The sidebar/content boundary is 134->281 (gap 147).
+    # Gaps further right are larger (627->874 = 247, 1060->1305 = 245) but must NOT win --
+    # the first qualifying gap wins, not the largest anywhere.
+    assert find_gap_threshold(lefts) == (134.0 + 281.0) / 2
 
-def test_percentage_fallback_rect_nonzero_origin():
-    assert percentage_fallback_rect((100, 50, 1100, 850)) == (300, 50, 900, 850)
+def test_find_gap_threshold_too_few_lines():
+    assert find_gap_threshold([100.0, 200.0, 300.0]) is None
+
+def test_find_gap_threshold_no_qualifying_gap():
+    assert find_gap_threshold([100.0, 110.0, 120.0, 130.0, 140.0]) is None
+
+def test_find_gap_threshold_gap_exactly_at_minimum():
+    lefts = [100.0, 110.0, 120.0, 130.0, 210.0]
+    assert find_gap_threshold(lefts) == (130.0 + 210.0) / 2
+
+def test_find_gap_threshold_early_gap_not_largest_synthetic():
+    lefts = [100.0, 110.0, 120.0, 130.0, 220.0, 230.0, 240.0, 250.0, 900.0]
+    # First qualifying gap is 130->220 (90px); 250->900 (650px) is larger but comes later.
+    assert find_gap_threshold(lefts) == (130.0 + 220.0) / 2
+
+def test_filter_and_sort_lines_no_threshold_keeps_all_sorted():
+    lines = [(300.0, 50.0, "second line"), (100.0, 10.0, "first line")]
+    assert filter_and_sort_lines(lines, None) == [
+        (100.0, 10.0, "first line"),
+        (300.0, 50.0, "second line"),
+    ]
+
+def test_filter_and_sort_lines_threshold_drops_left_lines():
+    lines = [(50.0, 10.0, "sidebar"), (300.0, 10.0, "content")]
+    assert filter_and_sort_lines(lines, 200.0) == [(300.0, 10.0, "content")]
+
+def test_filter_and_sort_lines_sorts_out_of_order_input():
+    lines = [(300.0, 50.0, "c"), (300.0, 10.0, "a"), (100.0, 30.0, "b")]
+    assert filter_and_sort_lines(lines, None) == [
+        (300.0, 10.0, "a"),
+        (100.0, 30.0, "b"),
+        (300.0, 50.0, "c"),
+    ]
 
 def test_content_rect_to_crop_box_inside_window():
     content_rect = (150, 100, 850, 700)
@@ -244,8 +290,14 @@ if __name__ == "__main__":
     test_is_subpage_exempt_quora_topic_nested()
     test_is_subpage_exempt_quora_question_not_exempt()
     test_is_subpage_exempt_neither_site()
-    test_percentage_fallback_rect_default()
-    test_percentage_fallback_rect_nonzero_origin()
+    test_find_gap_threshold_real_data_picks_first_gap_not_largest()
+    test_find_gap_threshold_too_few_lines()
+    test_find_gap_threshold_no_qualifying_gap()
+    test_find_gap_threshold_gap_exactly_at_minimum()
+    test_find_gap_threshold_early_gap_not_largest_synthetic()
+    test_filter_and_sort_lines_no_threshold_keeps_all_sorted()
+    test_filter_and_sort_lines_threshold_drops_left_lines()
+    test_filter_and_sort_lines_sorts_out_of_order_input()
     test_content_rect_to_crop_box_inside_window()
     test_content_rect_to_crop_box_clamped()
     test_content_rect_to_crop_box_degenerate_returns_none()

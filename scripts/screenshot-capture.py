@@ -28,8 +28,6 @@ BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
 UIA_CAPABLE_BROWSERS = {"chrome", "edge"}
 SUBPAGE_GATED_SITES = {"quora", "linkedin"}
 CROP_CONTENT_SITES = {"quora", "linkedin", "facebook"}
-CONTENT_CROP_LEFT_PCT = 0.20
-CONTENT_CROP_RIGHT_PCT = 0.20
 MIN_CROP_WIDTH = 100
 MIN_CROP_HEIGHT = 100
 UIA_LANDMARK_TYPE_PROPERTY_ID = 30157  # UIA_LandmarkTypePropertyId
@@ -90,14 +88,6 @@ def has_subpath(url: str) -> bool:
     return len(url[idx + len(".com/"):]) > 0
 
 
-def percentage_fallback_rect(doc_rect: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
-    left, top, right, bottom = doc_rect
-    width = right - left
-    new_left = left + int(width * CONTENT_CROP_LEFT_PCT)
-    new_right = right - int(width * CONTENT_CROP_RIGHT_PCT)
-    return (new_left, top, new_right, bottom)
-
-
 def content_rect_to_crop_box(content_rect: tuple[int, int, int, int], window_rect: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
     c_left, c_top, c_right, c_bottom = content_rect
     w_left, w_top, w_right, w_bottom = window_rect
@@ -108,6 +98,28 @@ def content_rect_to_crop_box(content_rect: tuple[int, int, int, int], window_rec
     if box_right - box_left < MIN_CROP_WIDTH or box_bottom - box_top < MIN_CROP_HEIGHT:
         return None
     return (box_left, box_top, box_right, box_bottom)
+
+
+MIN_LINES_FOR_SPLIT = 4
+MIN_GAP_FOR_SPLIT_PX = 80.0
+
+
+def find_gap_threshold(lefts: list[float]) -> float | None:
+    if len(lefts) < MIN_LINES_FOR_SPLIT:
+        return None
+    distinct = sorted(set(lefts))
+    if len(distinct) < 2:
+        return None
+    for a, b in zip(distinct, distinct[1:]):
+        gap = b - a
+        if gap >= MIN_GAP_FOR_SPLIT_PX:
+            return (a + b) / 2
+    return None
+
+
+def filter_and_sort_lines(lines: list[tuple[float, float, str]], threshold: float | None) -> list[tuple[float, float, str]]:
+    kept = [line for line in lines if threshold is None or line[0] >= threshold]
+    return sorted(kept, key=lambda line: (line[1], line[0]))
 
 
 def landmark_too_wide(landmark_rect: tuple[int, int, int, int], doc_rect: tuple[int, int, int, int]) -> bool:
