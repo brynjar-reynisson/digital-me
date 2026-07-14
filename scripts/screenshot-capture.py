@@ -25,8 +25,12 @@ SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora
 # Order matters: "chrome" must precede "edge" so titles like "...share knowledge -
 # Google Chrome" match "chrome" first, since "knowledge" itself contains "edge".
 BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
-SUBPAGE_CAPABLE_BROWSERS = {"chrome", "edge"}
+UIA_CAPABLE_BROWSERS = {"chrome", "edge"}
 SUBPAGE_GATED_SITES = {"quora", "linkedin"}
+CONTENT_CROP_LEFT_PCT = 0.20
+CONTENT_CROP_RIGHT_PCT = 0.20
+MIN_CROP_WIDTH = 100
+MIN_CROP_HEIGHT = 100
 
 
 def detect_site(window_title: str) -> tuple[str | None, str | None, str]:
@@ -76,6 +80,26 @@ def has_subpath(url: str) -> bool:
     if idx == -1:
         return False
     return len(url[idx + len(".com/"):]) > 0
+
+
+def percentage_fallback_rect(doc_rect: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    left, top, right, bottom = doc_rect
+    width = right - left
+    new_left = left + int(width * CONTENT_CROP_LEFT_PCT)
+    new_right = right - int(width * CONTENT_CROP_RIGHT_PCT)
+    return (new_left, top, new_right, bottom)
+
+
+def content_rect_to_crop_box(content_rect: tuple[int, int, int, int], window_rect: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
+    c_left, c_top, c_right, c_bottom = content_rect
+    w_left, w_top, w_right, w_bottom = window_rect
+    box_left = max(c_left - w_left, 0)
+    box_top = max(c_top - w_top, 0)
+    box_right = min(c_right - w_left, w_right - w_left)
+    box_bottom = min(c_bottom - w_top, w_bottom - w_top)
+    if box_right - box_left < MIN_CROP_WIDTH or box_bottom - box_top < MIN_CROP_HEIGHT:
+        return None
+    return (box_left, box_top, box_right, box_bottom)
 
 
 LINKEDIN_FEED_PATTERN = re.compile(r"linkedin\.com/feed/?(?:[?#]|$)")
@@ -136,7 +160,7 @@ def main() -> None:
     pagename, browser, window_title = detect_site(title)
     if pagename is None:
         return
-    if pagename in SUBPAGE_GATED_SITES and browser in SUBPAGE_CAPABLE_BROWSERS:
+    if pagename in SUBPAGE_GATED_SITES and browser in UIA_CAPABLE_BROWSERS:
         url = get_address_bar_url(hwnd)
         if url is not None and has_subpath(url) and not is_subpage_exempt(url):
             return

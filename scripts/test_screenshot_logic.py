@@ -34,6 +34,29 @@ def has_subpath(url: str) -> bool:
 def is_subpage_exempt(url: str) -> bool:
     return bool(LINKEDIN_FEED_PATTERN.search(url)) or bool(QUORA_TOPIC_PATTERN.search(url))
 
+CONTENT_CROP_LEFT_PCT = 0.20
+CONTENT_CROP_RIGHT_PCT = 0.20
+MIN_CROP_WIDTH = 100
+MIN_CROP_HEIGHT = 100
+
+def percentage_fallback_rect(doc_rect: tuple) -> tuple:
+    left, top, right, bottom = doc_rect
+    width = right - left
+    new_left = left + int(width * CONTENT_CROP_LEFT_PCT)
+    new_right = right - int(width * CONTENT_CROP_RIGHT_PCT)
+    return (new_left, top, new_right, bottom)
+
+def content_rect_to_crop_box(content_rect: tuple, window_rect: tuple):
+    c_left, c_top, c_right, c_bottom = content_rect
+    w_left, w_top, w_right, w_bottom = window_rect
+    box_left = max(c_left - w_left, 0)
+    box_top = max(c_top - w_top, 0)
+    box_right = min(c_right - w_left, w_right - w_left)
+    box_bottom = min(c_bottom - w_top, w_bottom - w_top)
+    if box_right - box_left < MIN_CROP_WIDTH or box_bottom - box_top < MIN_CROP_HEIGHT:
+        return None
+    return (box_left, box_top, box_right, box_bottom)
+
 def test_detect_quora():
     pagename, browser, title = detect_site("Quora - A place to share knowledge - Google Chrome")
     assert pagename == "quora", f"expected quora, got {pagename}"
@@ -123,6 +146,27 @@ def test_is_subpage_exempt_quora_question_not_exempt():
 def test_is_subpage_exempt_neither_site():
     assert is_subpage_exempt("https://www.facebook.com/topic/") is False
 
+def test_percentage_fallback_rect_default():
+    assert percentage_fallback_rect((0, 0, 1000, 800)) == (200, 0, 800, 800)
+
+def test_percentage_fallback_rect_nonzero_origin():
+    assert percentage_fallback_rect((100, 50, 1100, 850)) == (300, 50, 900, 850)
+
+def test_content_rect_to_crop_box_inside_window():
+    content_rect = (150, 100, 850, 700)
+    window_rect = (100, 50, 1000, 800)
+    assert content_rect_to_crop_box(content_rect, window_rect) == (50, 50, 750, 650)
+
+def test_content_rect_to_crop_box_clamped():
+    content_rect = (50, 30, 1050, 820)
+    window_rect = (100, 50, 1000, 800)
+    assert content_rect_to_crop_box(content_rect, window_rect) == (0, 0, 900, 750)
+
+def test_content_rect_to_crop_box_degenerate_returns_none():
+    content_rect = (100, 50, 150, 800)
+    window_rect = (100, 50, 1000, 800)
+    assert content_rect_to_crop_box(content_rect, window_rect) is None
+
 def test_state_roundtrip():
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         path = Path(f.name)
@@ -166,6 +210,11 @@ if __name__ == "__main__":
     test_is_subpage_exempt_quora_topic_nested()
     test_is_subpage_exempt_quora_question_not_exempt()
     test_is_subpage_exempt_neither_site()
+    test_percentage_fallback_rect_default()
+    test_percentage_fallback_rect_nonzero_origin()
+    test_content_rect_to_crop_box_inside_window()
+    test_content_rect_to_crop_box_clamped()
+    test_content_rect_to_crop_box_degenerate_returns_none()
     test_state_roundtrip()
     test_load_state_missing_file()
     print("All tests passed.")
