@@ -20,17 +20,18 @@ from winsdk.windows.storage.streams import DataWriter, InMemoryRandomAccessStrea
 STATE_FILE = Path(__file__).parent / "screenshot-capture-state.json"
 DIGITAL_ME_URL = "http://localhost:8080/addContent"
 SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
-BROWSER_KEYWORDS = {"chrome", "edge", "firefox", "opera", "brave"}
+BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
 
 
-def detect_site(window_title: str) -> tuple[str | None, str]:
+def detect_site(window_title: str) -> tuple[str | None, str | None, str]:
     lower = window_title.lower()
-    if not any(b in lower for b in BROWSER_KEYWORDS):
-        return None, window_title
+    matched_browser = next((b for b in BROWSER_KEYWORDS if b in lower), None)
+    if matched_browser is None:
+        return None, None, window_title
     for keyword, pagename in SITE_KEYWORDS.items():
         if keyword in lower:
-            return pagename, window_title
-    return None, window_title
+            return pagename, matched_browser, window_title
+    return None, None, window_title
 
 
 def get_active_window() -> tuple[int, str]:
@@ -100,7 +101,7 @@ def send_to_digital_me(source: str, name: str, content: str) -> None:
 
 def main() -> None:
     hwnd, title = get_active_window()
-    pagename, window_title = detect_site(title)
+    pagename, browser, window_title = detect_site(title)
     if pagename is None:
         return
     bmp_bytes = take_screenshot_bmp(hwnd)
