@@ -5,52 +5,61 @@ from pathlib import Path
 
 # Inline the two pure functions so this file has no external imports
 SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
-BROWSER_KEYWORDS = {"chrome", "edge", "firefox", "opera", "brave"}
+BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
 
 def detect_site(window_title: str) -> tuple:
     lower = window_title.lower()
-    if not any(b in lower for b in BROWSER_KEYWORDS):
-        return None, window_title
+    matched_browser = next((b for b in BROWSER_KEYWORDS if b in lower), None)
+    if matched_browser is None:
+        return None, None, window_title
     for keyword, pagename in SITE_KEYWORDS.items():
         if keyword in lower:
-            return pagename, window_title
-    return None, window_title
+            return pagename, matched_browser, window_title
+    return None, None, window_title
 
 def hash_bytes(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
 
 def test_detect_quora():
-    pagename, title = detect_site("Quora - A place to share knowledge - Google Chrome")
+    pagename, browser, title = detect_site("Quora - A place to share knowledge - Google Chrome")
     assert pagename == "quora", f"expected quora, got {pagename}"
+    assert browser == "chrome", f"expected chrome, got {browser}"
     assert "Quora" in title
 
 def test_detect_linkedin():
-    pagename, _ = detect_site("Feed | LinkedIn - Google Chrome")
+    pagename, browser, _ = detect_site("Feed | LinkedIn - Google Chrome")
     assert pagename == "linkedin"
+    assert browser == "chrome"
 
 def test_detect_facebook():
-    pagename, _ = detect_site("Facebook - Google Chrome")
+    pagename, browser, _ = detect_site("Facebook - Google Chrome")
     assert pagename == "facebook"
+    assert browser == "chrome"
 
 def test_detect_no_match():
-    pagename, _ = detect_site("GitHub - Microsoft Edge")
+    pagename, browser, _ = detect_site("GitHub - Microsoft Edge")
     assert pagename is None
+    assert browser is None
 
 def test_detect_case_insensitive():
-    pagename, _ = detect_site("QUORA - SOME TITLE - GOOGLE CHROME")
+    pagename, browser, _ = detect_site("QUORA - SOME TITLE - GOOGLE CHROME")
     assert pagename == "quora"
+    assert browser == "chrome"
 
 def test_detect_ignores_notepad():
-    pagename, _ = detect_site("screenshot_quora_20260620_014350.txt - Notepad")
+    pagename, browser, _ = detect_site("screenshot_quora_20260620_014350.txt - Notepad")
     assert pagename is None
+    assert browser is None
 
 def test_detect_ignores_explorer():
-    pagename, _ = detect_site("LinkedIn - File Explorer")
+    pagename, browser, _ = detect_site("LinkedIn - File Explorer")
     assert pagename is None
+    assert browser is None
 
 def test_detect_microsoft_edge():
-    pagename, _ = detect_site("Feed | LinkedIn - Microsoft Edge")
+    pagename, browser, _ = detect_site("Feed | LinkedIn - Microsoft Edge")
     assert pagename == "linkedin"
+    assert browser == "edge"
 
 def test_hash_deterministic():
     assert hash_bytes(b"hello") == hash_bytes(b"hello")
