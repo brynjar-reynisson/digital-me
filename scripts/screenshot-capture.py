@@ -31,6 +31,10 @@ CONTENT_CROP_LEFT_PCT = 0.20
 CONTENT_CROP_RIGHT_PCT = 0.20
 MIN_CROP_WIDTH = 100
 MIN_CROP_HEIGHT = 100
+UIA_LANDMARK_TYPE_PROPERTY_ID = 30154  # UIA_LandmarkTypePropertyId
+UIA_MAIN_LANDMARK_TYPE_ID = 80003      # UIA_MainLandmarkTypeId
+MAX_LANDMARK_SEARCH_NODES = 500
+MAX_LANDMARK_SEARCH_DEPTH = 20
 
 
 def detect_site(window_title: str) -> tuple[str | None, str | None, str]:
@@ -100,6 +104,46 @@ def content_rect_to_crop_box(content_rect: tuple[int, int, int, int], window_rec
     if box_right - box_left < MIN_CROP_WIDTH or box_bottom - box_top < MIN_CROP_HEIGHT:
         return None
     return (box_left, box_top, box_right, box_bottom)
+
+
+def find_main_landmark(doc_control) -> tuple[int, int, int, int] | None:
+    queue = [(doc_control, 0)]
+    visited = 0
+    while queue:
+        control, depth = queue.pop(0)
+        visited += 1
+        if visited > MAX_LANDMARK_SEARCH_NODES:
+            return None
+        try:
+            landmark_type = control.GetPropertyValue(UIA_LANDMARK_TYPE_PROPERTY_ID)
+        except Exception:
+            landmark_type = None
+        if landmark_type == UIA_MAIN_LANDMARK_TYPE_ID:
+            rect = control.BoundingRectangle
+            return (rect.left, rect.top, rect.right, rect.bottom)
+        if depth < MAX_LANDMARK_SEARCH_DEPTH:
+            try:
+                children = control.GetChildren()
+            except Exception:
+                children = []
+            for child in children:
+                queue.append((child, depth + 1))
+    return None
+
+
+def get_main_content_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    try:
+        window_rect = win32gui.GetWindowRect(hwnd)
+        window = auto.ControlFromHandle(hwnd)
+        doc = window.DocumentControl()
+        if not doc.Exists(0, 0):
+            return None
+        r = doc.BoundingRectangle
+        doc_rect = (r.left, r.top, r.right, r.bottom)
+        content_rect = find_main_landmark(doc) or percentage_fallback_rect(doc_rect)
+        return content_rect_to_crop_box(content_rect, window_rect)
+    except Exception:
+        return None
 
 
 LINKEDIN_FEED_PATTERN = re.compile(r"linkedin\.com/feed/?(?:[?#]|$)")
