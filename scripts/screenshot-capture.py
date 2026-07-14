@@ -54,6 +54,13 @@ def hash_bytes(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
 
 
+def has_subpath(url: str) -> bool:
+    idx = url.rfind(".com/")
+    if idx == -1:
+        return False
+    return len(url[idx + len(".com/"):]) > 0
+
+
 def load_state() -> dict:
     if STATE_FILE.exists():
         try:
