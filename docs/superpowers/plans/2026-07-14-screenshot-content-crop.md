@@ -14,7 +14,7 @@
 - `CONTENT_CROP_LEFT_PCT = 0.20`, `CONTENT_CROP_RIGHT_PCT = 0.20` — fraction of the `Document` control's width trimmed from each side in the percentage-fallback path.
 - `MIN_CROP_WIDTH = 100`, `MIN_CROP_HEIGHT = 100` — below these, a computed crop box is discarded (treated as `None`) rather than used.
 - `CROP_CONTENT_SITES = {"quora", "linkedin", "facebook"}`.
-- `UIA_LANDMARK_TYPE_PROPERTY_ID = 30154`, `UIA_MAIN_LANDMARK_TYPE_ID = 80003` — standard Win32 UIA constants (`UIAutomationClient.h`), used via `Control.GetPropertyValue()`.
+- `UIA_LANDMARK_TYPE_PROPERTY_ID = 30157`, `UIA_MAIN_LANDMARK_TYPE_ID = 80002` — standard Win32 UIA constants (`UIAutomationClient.h`), used via `Control.GetPropertyValue()`. Confirmed against the installed `uiautomation` package and Microsoft's "Landmark Type Identifiers" documentation (corrected during Task 2's review — the design spec's original values, 30154/80003, were wrong: 30154 is `UIA_LevelPropertyId` and 80003 is `UIA_NavigationLandmarkTypeId`).
 - `MAX_LANDMARK_SEARCH_NODES = 500`, `MAX_LANDMARK_SEARCH_DEPTH = 20` — bound the landmark search's worst-case latency.
 - Rename existing `SUBPAGE_CAPABLE_BROWSERS` → `UIA_CAPABLE_BROWSERS` (value unchanged: `{"chrome", "edge"}`); this feature reuses it rather than introducing a second Chrome/Edge-only constant.
 - Fail-open, no exceptions: any UIA failure at any stage returns `None` ("no crop, no known content region") rather than raising — the caller then captures the full window exactly as it does today. This mirrors the existing `get_address_bar_url()` pattern.
@@ -150,8 +150,8 @@ These functions are impure (UIA tree-walking) and are not unit tested, consisten
 In `scripts/screenshot-capture.py`, add near the other new constants from Task 1:
 
 ```python
-UIA_LANDMARK_TYPE_PROPERTY_ID = 30154  # UIA_LandmarkTypePropertyId
-UIA_MAIN_LANDMARK_TYPE_ID = 80003      # UIA_MainLandmarkTypeId
+UIA_LANDMARK_TYPE_PROPERTY_ID = 30157  # UIA_LandmarkTypePropertyId
+UIA_MAIN_LANDMARK_TYPE_ID = 80002      # UIA_MainLandmarkTypeId
 MAX_LANDMARK_SEARCH_NODES = 500
 MAX_LANDMARK_SEARCH_DEPTH = 20
 ```
@@ -174,8 +174,11 @@ def find_main_landmark(doc_control) -> tuple[int, int, int, int] | None:
         except Exception:
             landmark_type = None
         if landmark_type == UIA_MAIN_LANDMARK_TYPE_ID:
-            rect = control.BoundingRectangle
-            return (rect.left, rect.top, rect.right, rect.bottom)
+            try:
+                rect = control.BoundingRectangle
+                return (rect.left, rect.top, rect.right, rect.bottom)
+            except Exception:
+                return None
         if depth < MAX_LANDMARK_SEARCH_DEPTH:
             try:
                 children = control.GetChildren()

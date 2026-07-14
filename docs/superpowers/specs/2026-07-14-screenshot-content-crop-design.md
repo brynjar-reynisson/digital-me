@@ -80,8 +80,8 @@ Converts a screen-coordinate content rectangle into a window-relative crop box (
 ### `find_main_landmark(doc_control)` (new, impure — walks the UIA tree)
 
 ```python
-UIA_LANDMARK_TYPE_PROPERTY_ID = 30154  # UIA_LandmarkTypePropertyId
-UIA_MAIN_LANDMARK_TYPE_ID = 80003      # UIA_MainLandmarkTypeId
+UIA_LANDMARK_TYPE_PROPERTY_ID = 30157  # UIA_LandmarkTypePropertyId
+UIA_MAIN_LANDMARK_TYPE_ID = 80002      # UIA_MainLandmarkTypeId
 MAX_LANDMARK_SEARCH_NODES = 500
 MAX_LANDMARK_SEARCH_DEPTH = 20
 
@@ -111,7 +111,7 @@ def find_main_landmark(doc_control) -> tuple[int, int, int, int] | None:
     return None
 ```
 
-`UIA_LandmarkTypePropertyId` (30154) and `UIA_MainLandmarkTypeId` (80003) are standard, stable Win32 UI Automation constants (defined in `UIAutomationClient.h`), used here via the `uiautomation` package's generic `GetPropertyValue()` rather than a convenience wrapper, since the exact convenience-property name in the `uiautomation` Python package needs confirming against a live install. Task-level manual verification (see Tests below) will confirm this call shape against real Quora/LinkedIn/Facebook pages and adjust if the package exposes a more direct accessor.
+`UIA_LandmarkTypePropertyId` (30157) and `UIA_MainLandmarkTypeId` (80002) are standard, stable Win32 UI Automation constants (defined in `UIAutomationClient.h`), used here via the `uiautomation` package's generic `GetPropertyValue()` rather than a convenience wrapper. Confirmed against the installed `uiautomation` package (`auto.PropertyId.LandmarkTypeProperty == 30157`) and Microsoft's own "Landmark Type Identifiers" documentation.
 
 Breadth-first, capped at 500 visited nodes and depth 20, to bound worst-case latency against a large page DOM. Returns the first `main`-landmark's bounding rectangle found, or `None` if none is found (or the cap is hit) — triggering the percentage fallback.
 
