@@ -28,8 +28,10 @@ public class DeepseekSummarizeClient implements SummarizeClient {
     private final long timeoutSeconds;
     private final ObjectMapper objectMapper;
 
+    // Windows-installed npm CLIs are .cmd shims; ProcessBuilder does not do PATHEXT-style
+    // resolution of bare command names the way cmd.exe does, so the extension is required.
     public DeepseekSummarizeClient(
-            @Value("${opencode.command:opencode}") String opencodeCommand,
+            @Value("${opencode.command:opencode.cmd}") String opencodeCommand,
             @Value("${opencode.summarize.model:deepseek/deepseek-v4-flash}") String model,
             @Value("${opencode.summarize.timeout-seconds:60}") long timeoutSeconds,
             ObjectMapper objectMapper) {
@@ -41,11 +43,17 @@ public class DeepseekSummarizeClient implements SummarizeClient {
 
     @Override
     public String summarize(String text) {
-        String prompt = "Summarize the following in 2-3 sentences:\n\n" + text;
+        // No embedded newline here: this string becomes a single ProcessBuilder argument
+        // routed through opencode.cmd, which Windows executes via cmd.exe /c — cmd.exe
+        // truncates an argument at the first embedded newline.
+        String prompt = "Summarize the following in 2-3 sentences: " + text;
         try {
             Process process = new ProcessBuilder(opencodeCommand, "run", "--model", model, "--format", "json", prompt)
                     .redirectErrorStream(true)
                     .start();
+            // opencode blocks reading stdin until it sees EOF; close it immediately since
+            // the prompt is already passed as a CLI argument, not piped in.
+            process.getOutputStream().close();
             AtomicReference<String> outputRef = new AtomicReference<>("");
             Thread reader = startOutputReader(process, outputRef);
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
@@ -75,6 +83,7 @@ public class DeepseekSummarizeClient implements SummarizeClient {
             Process process = new ProcessBuilder(opencodeCommand, "--version")
                     .redirectErrorStream(true)
                     .start();
+            process.getOutputStream().close();
             AtomicReference<String> outputRef = new AtomicReference<>("");
             Thread reader = startOutputReader(process, outputRef);
             boolean finished = process.waitFor(5, TimeUnit.SECONDS);
