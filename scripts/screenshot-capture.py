@@ -35,6 +35,7 @@ UIA_LANDMARK_TYPE_PROPERTY_ID = 30157  # UIA_LandmarkTypePropertyId
 UIA_MAIN_LANDMARK_TYPE_ID = 80002      # UIA_MainLandmarkTypeId
 MAX_LANDMARK_SEARCH_NODES = 500
 MAX_LANDMARK_SEARCH_DEPTH = 20
+MAX_LANDMARK_WIDTH_FRACTION = 0.80
 
 
 def detect_site(window_title: str) -> tuple[str | None, str | None, str]:
@@ -106,6 +107,14 @@ def content_rect_to_crop_box(content_rect: tuple[int, int, int, int], window_rec
     return (box_left, box_top, box_right, box_bottom)
 
 
+def landmark_too_wide(landmark_rect: tuple[int, int, int, int], doc_rect: tuple[int, int, int, int]) -> bool:
+    landmark_width = landmark_rect[2] - landmark_rect[0]
+    doc_width = doc_rect[2] - doc_rect[0]
+    if doc_width <= 0:
+        return False
+    return (landmark_width / doc_width) > MAX_LANDMARK_WIDTH_FRACTION
+
+
 def find_main_landmark(doc_control) -> tuple[int, int, int, int] | None:
     queue = [(doc_control, 0)]
     visited = 0
@@ -149,7 +158,10 @@ def get_main_content_rect(hwnd: int) -> tuple[int, int, int, int] | None:
             return None
         r = doc.BoundingRectangle
         doc_rect = (r.left, r.top, r.right, r.bottom)
-        content_rect = find_main_landmark(doc) or percentage_fallback_rect(doc_rect)
+        landmark_rect = find_main_landmark(doc)
+        if landmark_rect is not None and landmark_too_wide(landmark_rect, doc_rect):
+            landmark_rect = None
+        content_rect = landmark_rect or percentage_fallback_rect(doc_rect)
         return content_rect_to_crop_box(content_rect, window_rect)
     except Exception:
         return None

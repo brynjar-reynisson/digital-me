@@ -133,13 +133,46 @@ def get_main_content_rect(hwnd: int) -> tuple[int, int, int, int] | None:
             return None
         r = doc.BoundingRectangle
         doc_rect = (r.left, r.top, r.right, r.bottom)
-        content_rect = find_main_landmark(doc) or percentage_fallback_rect(doc_rect)
+        landmark_rect = find_main_landmark(doc)
+        if landmark_rect is not None and landmark_too_wide(landmark_rect, doc_rect):
+            landmark_rect = None
+        content_rect = landmark_rect or percentage_fallback_rect(doc_rect)
         return content_rect_to_crop_box(content_rect, window_rect)
     except Exception:
         return None
 ```
 
 Broad exception catch is intentional, matching `get_address_bar_url`'s existing pattern: any UIA failure degrades to "no crop," never a crash.
+
+### Addendum: rejecting too-wide landmarks
+
+Live verification against the real target sites (with corrected constants and the render-host
+anchoring, see below) found that a `main` landmark, when present, doesn't always mean what this
+feature needs it to mean. On LinkedIn's feed, the `main` landmark spans the *entire* three-column
+layout (left profile card, center feed, right "Add to your feed" column) — about 96% of the
+document's width — because LinkedIn wraps the whole page body in one `<main>` element rather than
+scoping it to just the feed column. Using it verbatim produced a screenshot barely narrower than the
+uncropped window, defeating the feature's purpose. Facebook's `main` landmark, by contrast, correctly
+scopes to just the center feed column (about 49% of document width) and produces an excellent crop.
+
+Fix: `landmark_too_wide(landmark_rect, doc_rect)` (new, pure) rejects a landmark whose width exceeds
+`MAX_LANDMARK_WIDTH_FRACTION = 0.80` (80%) of the document's width, treating it as "not useful" and
+falling through to `percentage_fallback_rect` instead:
+
+```python
+MAX_LANDMARK_WIDTH_FRACTION = 0.80
+
+def landmark_too_wide(landmark_rect: tuple[int, int, int, int], doc_rect: tuple[int, int, int, int]) -> bool:
+    landmark_width = landmark_rect[2] - landmark_rect[0]
+    doc_width = doc_rect[2] - doc_rect[0]
+    if doc_width <= 0:
+        return False
+    return (landmark_width / doc_width) > MAX_LANDMARK_WIDTH_FRACTION
+```
+
+Verified live: LinkedIn's landmark (ratio ~1.0) is now rejected, falling back to the already-verified
+20%/20% percentage crop; Facebook's landmark (ratio ~0.51) is well under the threshold and is used
+unchanged.
 
 ### `take_screenshot_bmp(hwnd, crop_box=None)` — extended signature
 
@@ -183,6 +216,11 @@ Mirror the pure functions into the file's existing inlined-copy pattern, with th
   - content rect fully inside window → simple offset translation
   - content rect exceeding window bounds on one side → clamped to the window edge
   - degenerate case (width or height below `MIN_CROP_WIDTH`/`MIN_CROP_HEIGHT`) → `None`
+- `landmark_too_wide`:
+  - landmark width clearly over the 80% threshold → `True`
+  - landmark width clearly under the threshold → `False`
+  - landmark width exactly at the threshold (80% of doc width) → `False` (strict `>` comparison, not `>=`)
+  - zero-width `doc_rect` → `False` (avoid division by zero; safe default is "not too wide")
 
 `find_main_landmark` and `get_main_content_rect` are UIA-touching and not unit-tested — consistent with `get_address_bar_url` (see `docs/testing.md`). Manual verification against live Chrome/Edge windows on Quora, LinkedIn, and Facebook is required before merge: confirm a `main` landmark is found where the site markup has one, confirm the percentage fallback engages sensibly where it doesn't, and confirm OCR output on the cropped image excludes the tab pane and side columns.
 

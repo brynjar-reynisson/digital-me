@@ -16,6 +16,7 @@
 - `CROP_CONTENT_SITES = {"quora", "linkedin", "facebook"}`.
 - `UIA_LANDMARK_TYPE_PROPERTY_ID = 30157`, `UIA_MAIN_LANDMARK_TYPE_ID = 80002` — standard Win32 UIA constants (`UIAutomationClient.h`), used via `Control.GetPropertyValue()`. Confirmed against the installed `uiautomation` package and Microsoft's "Landmark Type Identifiers" documentation (corrected during Task 2's review — the design spec's original values, 30154/80003, were wrong: 30154 is `UIA_LevelPropertyId` and 80003 is `UIA_NavigationLandmarkTypeId`).
 - `MAX_LANDMARK_SEARCH_NODES = 500`, `MAX_LANDMARK_SEARCH_DEPTH = 20` — bound the landmark search's worst-case latency.
+- `MAX_LANDMARK_WIDTH_FRACTION = 0.80` — a found landmark is rejected (treated as not found, falling through to the percentage crop) if its width exceeds 80% of the document's width. Added after live testing found LinkedIn's `main` landmark spans its entire three-column layout rather than just the feed column.
 - Rename existing `SUBPAGE_CAPABLE_BROWSERS` → `UIA_CAPABLE_BROWSERS` (value unchanged: `{"chrome", "edge"}`); this feature reuses it rather than introducing a second Chrome/Edge-only constant.
 - Fail-open, no exceptions: any UIA failure at any stage returns `None` ("no crop, no known content region") rather than raising — the caller then captures the full window exactly as it does today. This mirrors the existing `get_address_bar_url()` pattern.
 - `take_screenshot_bmp(hwnd, crop_box=None)` — the default `None` must preserve today's exact full-window behavior for every site not in `CROP_CONTENT_SITES` (Firefox/Opera/Brave, and any other unmatched site or browser).
@@ -137,13 +138,15 @@ git commit -m "feat: add pure crop-math functions, rename UIA_CAPABLE_BROWSERS"
 
 **Files:**
 - Modify: `scripts/screenshot-capture.py`
+- Modify: `scripts/test_screenshot_logic.py` (for `landmark_too_wide` only — the impure functions are not mirrored here)
 
 **Interfaces:**
 - Consumes: `percentage_fallback_rect`, `content_rect_to_crop_box` (Task 1); existing `win32gui` and `auto` (`uiautomation`) imports; existing `UIA_CAPABLE_BROWSERS` constant (Task 1, informational — not referenced by these functions directly, only by `main()` in Task 3)
 - Produces: `find_main_landmark(doc_control) -> tuple[int, int, int, int] | None`
+- Produces: `landmark_too_wide(landmark_rect: tuple[int, int, int, int], doc_rect: tuple[int, int, int, int]) -> bool` (pure, unit tested — see Tests)
 - Produces: `get_main_content_rect(hwnd: int) -> tuple[int, int, int, int] | None`
 
-These functions are impure (UIA tree-walking) and are not unit tested, consistent with `get_address_bar_url()` — see `docs/testing.md`'s note that subprocess/OS-interaction correctness is verified manually, not in CI. This task's "test" is live manual verification against real browser windows (Steps 3-4).
+`find_main_landmark` and `get_main_content_rect` are impure (UIA tree-walking) and are not unit tested, consistent with `get_address_bar_url()` — see `docs/testing.md`'s note that subprocess/OS-interaction correctness is verified manually, not in CI. This task's "test" is live manual verification against real browser windows (Steps 3-4). `landmark_too_wide` is pure and must be mirrored into `scripts/test_screenshot_logic.py` with tests, per this project's inlined-copy convention (Task 1's precedent).
 
 - [ ] **Step 1: Add the constants**
 
@@ -189,6 +192,17 @@ def find_main_landmark(doc_control) -> tuple[int, int, int, int] | None:
     return None
 
 
+MAX_LANDMARK_WIDTH_FRACTION = 0.80
+
+
+def landmark_too_wide(landmark_rect: tuple[int, int, int, int], doc_rect: tuple[int, int, int, int]) -> bool:
+    landmark_width = landmark_rect[2] - landmark_rect[0]
+    doc_width = doc_rect[2] - doc_rect[0]
+    if doc_width <= 0:
+        return False
+    return (landmark_width / doc_width) > MAX_LANDMARK_WIDTH_FRACTION
+
+
 def get_main_content_rect(hwnd: int) -> tuple[int, int, int, int] | None:
     try:
         window_rect = win32gui.GetWindowRect(hwnd)
@@ -204,11 +218,58 @@ def get_main_content_rect(hwnd: int) -> tuple[int, int, int, int] | None:
             return None
         r = doc.BoundingRectangle
         doc_rect = (r.left, r.top, r.right, r.bottom)
-        content_rect = find_main_landmark(doc) or percentage_fallback_rect(doc_rect)
+        landmark_rect = find_main_landmark(doc)
+        if landmark_rect is not None and landmark_too_wide(landmark_rect, doc_rect):
+            landmark_rect = None
+        content_rect = landmark_rect or percentage_fallback_rect(doc_rect)
         return content_rect_to_crop_box(content_rect, window_rect)
     except Exception:
         return None
 ```
+
+`landmark_too_wide` is pure and unit-tested (see the Tests section). Added after live verification found LinkedIn's `main` landmark spans its entire three-column layout (~96% of document width) rather than just the feed column, which would otherwise produce a worse crop than the percentage fallback.
+
+- [ ] **Step 2b: Mirror `landmark_too_wide` into the test file, with tests**
+
+Add to `scripts/test_screenshot_logic.py`, after the inlined `content_rect_to_crop_box` copy and before `def test_detect_quora():`:
+
+```python
+MAX_LANDMARK_WIDTH_FRACTION = 0.80
+
+def landmark_too_wide(landmark_rect: tuple, doc_rect: tuple) -> bool:
+    landmark_width = landmark_rect[2] - landmark_rect[0]
+    doc_width = doc_rect[2] - doc_rect[0]
+    if doc_width <= 0:
+        return False
+    return (landmark_width / doc_width) > MAX_LANDMARK_WIDTH_FRACTION
+```
+
+Add these tests, placed with the other rect-math tests (e.g. after `test_content_rect_to_crop_box_degenerate_returns_none`, before `test_state_roundtrip`):
+
+```python
+def test_landmark_too_wide_true():
+    doc_rect = (0, 0, 1000, 800)
+    landmark_rect = (0, 0, 900, 800)
+    assert landmark_too_wide(landmark_rect, doc_rect) is True
+
+def test_landmark_too_wide_false():
+    doc_rect = (0, 0, 1000, 800)
+    landmark_rect = (200, 0, 800, 800)
+    assert landmark_too_wide(landmark_rect, doc_rect) is False
+
+def test_landmark_too_wide_exact_threshold_not_too_wide():
+    doc_rect = (0, 0, 1000, 800)
+    landmark_rect = (0, 0, 800, 800)
+    assert landmark_too_wide(landmark_rect, doc_rect) is False
+
+def test_landmark_too_wide_zero_doc_width():
+    doc_rect = (500, 0, 500, 800)
+    landmark_rect = (500, 0, 500, 800)
+    assert landmark_too_wide(landmark_rect, doc_rect) is False
+```
+
+Run: `cd scripts && python -m pytest test_screenshot_logic.py -v`
+Expected: `35 passed` (31 from Task 1 + 4 new)
 
 - [ ] **Step 3: Smoke-test import**
 
@@ -231,7 +292,7 @@ Record what was found for each of the 6 combinations (landmark found vs. percent
 - [ ] **Step 5: Run full test suite (regression check)**
 
 Run: `cd scripts && python -m pytest test_screenshot_logic.py -v`
-Expected: `31 passed` (this task adds no new unit tests, so the count from Task 1 is unchanged)
+Expected: `35 passed` (31 from Task 1 + the 4 `landmark_too_wide` tests from Step 2b)
 
 - [ ] **Step 6: Clean up and commit**
 
@@ -321,7 +382,7 @@ Expected: `import ok`
 - [ ] **Step 5: Run full test suite (regression check)**
 
 Run: `cd scripts && python -m pytest test_screenshot_logic.py -v`
-Expected: `31 passed`
+Expected: `35 passed`
 
 - [ ] **Step 6: End-to-end manual verification**
 

@@ -57,6 +57,15 @@ def content_rect_to_crop_box(content_rect: tuple, window_rect: tuple):
         return None
     return (box_left, box_top, box_right, box_bottom)
 
+MAX_LANDMARK_WIDTH_FRACTION = 0.80
+
+def landmark_too_wide(landmark_rect: tuple, doc_rect: tuple) -> bool:
+    landmark_width = landmark_rect[2] - landmark_rect[0]
+    doc_width = doc_rect[2] - doc_rect[0]
+    if doc_width <= 0:
+        return False
+    return (landmark_width / doc_width) > MAX_LANDMARK_WIDTH_FRACTION
+
 def test_detect_quora():
     pagename, browser, title = detect_site("Quora - A place to share knowledge - Google Chrome")
     assert pagename == "quora", f"expected quora, got {pagename}"
@@ -167,6 +176,26 @@ def test_content_rect_to_crop_box_degenerate_returns_none():
     window_rect = (100, 50, 1000, 800)
     assert content_rect_to_crop_box(content_rect, window_rect) is None
 
+def test_landmark_too_wide_true():
+    doc_rect = (0, 0, 1000, 800)
+    landmark_rect = (0, 0, 900, 800)
+    assert landmark_too_wide(landmark_rect, doc_rect) is True
+
+def test_landmark_too_wide_false():
+    doc_rect = (0, 0, 1000, 800)
+    landmark_rect = (200, 0, 800, 800)
+    assert landmark_too_wide(landmark_rect, doc_rect) is False
+
+def test_landmark_too_wide_exact_threshold_not_too_wide():
+    doc_rect = (0, 0, 1000, 800)
+    landmark_rect = (0, 0, 800, 800)
+    assert landmark_too_wide(landmark_rect, doc_rect) is False
+
+def test_landmark_too_wide_zero_doc_width():
+    doc_rect = (500, 0, 500, 800)
+    landmark_rect = (500, 0, 500, 800)
+    assert landmark_too_wide(landmark_rect, doc_rect) is False
+
 def test_state_roundtrip():
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         path = Path(f.name)
@@ -215,6 +244,10 @@ if __name__ == "__main__":
     test_content_rect_to_crop_box_inside_window()
     test_content_rect_to_crop_box_clamped()
     test_content_rect_to_crop_box_degenerate_returns_none()
+    test_landmark_too_wide_true()
+    test_landmark_too_wide_false()
+    test_landmark_too_wide_exact_threshold_not_too_wide()
+    test_landmark_too_wide_zero_doc_width()
     test_state_roundtrip()
     test_load_state_missing_file()
     print("All tests passed.")
