@@ -84,7 +84,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 ### `SemanticSearch`
 - Spring `@Component` combining `EmbeddingIndex` + `SummarizeClient`
 - `search(query)`: calls `EmbeddingIndex.findSimilar(query, FINAL_RESULT_LIMIT=50)`, filters via `ExclusionRules`, returns list of `{source, name, snippet}` maps with the snippet built from the winning chunk's text
-- `summarize(text)`: delegates to `SummarizeClient`; returns null when Ollama is unavailable
+- `summarize(text)`: delegates to `SummarizeClient`; returns null when the backend is unavailable
 - `snippet(raw)` (static): strips first line (source URL), normalises whitespace, caps at 2000 chars; appends `<truncated, use fetch tool>` if truncated — used by the keyword-search fallback, which still reads whole files
 - `chunkSnippet(chunkText)` (static): same normalisation/truncation as `snippet()` but without stripping a header line, since chunk text has no source-URL header — used by semantic search results
 
