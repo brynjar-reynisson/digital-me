@@ -148,13 +148,21 @@ def find_main_landmark(doc_control) -> tuple[int, int, int, int] | None:
 
 def get_main_content_rect(hwnd: int) -> tuple[int, int, int, int] | None:
     try:
+        # win32gui.GetWindowRect and UIA's BoundingRectangle are assumed to report the same
+        # pixel coordinate space -- true for a single-monitor or uniform-DPI setup (verified
+        # live). A mixed-DPI multi-monitor setup could in principle make them diverge and
+        # produce a misaligned crop that's still large enough to pass content_rect_to_crop_box's
+        # min-size check, rather than failing open to None.
         window_rect = win32gui.GetWindowRect(hwnd)
         window = auto.ControlFromHandle(hwnd)
         # window.DocumentControl() alone matches an empty "WebView" shell element on both
         # Chrome and Edge, not the real content DOM -- confirmed live: it has no landmark
         # children, so find_main_landmark() could never succeed searching it. The real
         # content lives under a sibling pane with the stable Chromium internal class name
-        # "Chrome_RenderWidgetHostHWND"; anchor the search there when present.
+        # "Chrome_RenderWidgetHostHWND"; anchor the search there when present. This takes the
+        # first match in the subtree, assumed to be the active tab's render host -- a window
+        # could in principle contain more than one (out-of-process iframes, prerendered tabs),
+        # but a wrong match just yields an empty/mismatched doc, which fails open below.
         render_host = window.PaneControl(ClassName="Chrome_RenderWidgetHostHWND")
         doc = render_host.DocumentControl() if render_host.Exists(0, 0) else window.DocumentControl()
         if not doc.Exists(0, 0):

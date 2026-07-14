@@ -10,4 +10,5 @@ digital-me-dev/
 frontend/node/
 scripts/screenshot-capture-state.json
 scripts/screenshot-capture.log
+scripts/__pycache__/
 e2e/node_modules/

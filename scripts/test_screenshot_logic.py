@@ -176,6 +176,11 @@ def test_content_rect_to_crop_box_degenerate_returns_none():
     window_rect = (100, 50, 1000, 800)
     assert content_rect_to_crop_box(content_rect, window_rect) is None
 
+def test_content_rect_to_crop_box_degenerate_height_returns_none():
+    content_rect = (100, 50, 1000, 120)
+    window_rect = (100, 50, 1000, 800)
+    assert content_rect_to_crop_box(content_rect, window_rect) is None
+
 def test_landmark_too_wide_true():
     doc_rect = (0, 0, 1000, 800)
     landmark_rect = (0, 0, 900, 800)
@@ -244,6 +249,7 @@ if __name__ == "__main__":
     test_content_rect_to_crop_box_inside_window()
     test_content_rect_to_crop_box_clamped()
     test_content_rect_to_crop_box_degenerate_returns_none()
+    test_content_rect_to_crop_box_degenerate_height_returns_none()
     test_landmark_too_wide_true()
     test_landmark_too_wide_false()
     test_landmark_too_wide_exact_threshold_not_too_wide()
