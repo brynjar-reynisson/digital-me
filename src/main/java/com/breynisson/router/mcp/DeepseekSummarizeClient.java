@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 
 /**
  * Calls the {@code opencode} CLI (routed to DeepSeek) to produce a short summary.
@@ -22,6 +23,11 @@ import java.util.concurrent.atomic.AtomicReference;
 public class DeepseekSummarizeClient implements SummarizeClient {
 
     private static final Logger log = LoggerFactory.getLogger(DeepseekSummarizeClient.class);
+
+    // opencode.cmd runs through cmd.exe on Windows; text can originate from arbitrary
+    // scraped web pages, so strip characters cmd.exe treats specially before they ever
+    // reach the argument list (defense in depth, independent of JDK escaping fixes).
+    private static final Pattern UNSAFE_ARGUMENT_CHARS = Pattern.compile("[&|<>^\"%\\r\\n]");
 
     private final String opencodeCommand;
     private final String model;
@@ -46,7 +52,7 @@ public class DeepseekSummarizeClient implements SummarizeClient {
         // No embedded newline here: this string becomes a single ProcessBuilder argument
         // routed through opencode.cmd, which Windows executes via cmd.exe /c — cmd.exe
         // truncates an argument at the first embedded newline.
-        String prompt = "Summarize the following in 2-3 sentences: " + text;
+        String prompt = "Summarize the following in 2-3 sentences: " + sanitizeArgument(text);
         try {
             Process process = new ProcessBuilder(opencodeCommand, "run", "--model", model, "--format", "json", prompt)
                     .redirectErrorStream(true)
@@ -65,7 +71,8 @@ public class DeepseekSummarizeClient implements SummarizeClient {
             reader.join(TimeUnit.SECONDS.toMillis(5));
             String output = outputRef.get();
             if (process.exitValue() != 0) {
-                log.warn("opencode summarize exited with {}: {}", process.exitValue(), output);
+                String truncatedOutput = output.length() > 500 ? output.substring(0, 500) + "..." : output;
+                log.warn("opencode summarize exited with {}: {}", process.exitValue(), truncatedOutput);
                 return null;
             }
             return extractSummary(output, objectMapper);
@@ -110,6 +117,11 @@ public class DeepseekSummarizeClient implements SummarizeClient {
         reader.setDaemon(true);
         reader.start();
         return reader;
+    }
+
+    /** Strips characters cmd.exe treats specially from untrusted text before it becomes a CLI argument. */
+    static String sanitizeArgument(String text) {
+        return UNSAFE_ARGUMENT_CHARS.matcher(text).replaceAll(" ");
     }
 
     /** Parses opencode's `--format json` NDJSON stdout, returning the last "text" part's content, or null if none. */

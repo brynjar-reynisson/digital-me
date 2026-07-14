@@ -17,3 +17,4 @@
 - `OllamaEmbeddingClientTest` uses JDK built-in `com.sun.net.httpserver.HttpServer` to mock Ollama HTTP responses without extra test dependencies; starts on port 0 (OS-assigned) in `@BeforeEach` and stops in `@AfterEach`
 - `EmbeddingIndexTest` uses a static `@TempDir` for the DB path and a separate instance `@TempDir` for file content
 - `McpEmbeddingDaoTest` follows the same static `@TempDir` + `setDefaultDatabasePath()` + `init()` + `setDefaultDatabasePath(null)` lifecycle pattern
+- `DeepseekSummarizeClientTest` only unit-tests the pure static helpers (`extractSummary()`, `sanitizeArgument()`) — no test spawns a real `opencode` process, so subprocess-handling correctness (PATHEXT resolution, stdin blocking, cmd.exe argument quoting) is verified manually against a live `opencode` install, not in CI

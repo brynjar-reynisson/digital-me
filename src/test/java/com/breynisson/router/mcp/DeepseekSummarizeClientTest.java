@@ -45,4 +45,20 @@ class DeepseekSummarizeClientTest {
                 """;
         assertNull(DeepseekSummarizeClient.extractSummary(ndjson, objectMapper));
     }
+
+    @Test
+    void sanitizeArgumentStripsCmdMetacharacters() {
+        assertEquals("echo hi   whoami", DeepseekSummarizeClient.sanitizeArgument("echo hi & whoami"));
+        assertEquals("a  b", DeepseekSummarizeClient.sanitizeArgument("a \"b"));
+        assertEquals(" PATH ", DeepseekSummarizeClient.sanitizeArgument("%PATH%"));
+        assertEquals("a b", DeepseekSummarizeClient.sanitizeArgument("a\nb"));
+        assertEquals("a b", DeepseekSummarizeClient.sanitizeArgument("a\rb"));
+    }
+
+    @Test
+    void sanitizeArgumentLeavesOrdinaryTextUnchanged() {
+        assertEquals("Ordinary sentence with no special characters, including punctuation like commas.",
+                DeepseekSummarizeClient.sanitizeArgument(
+                        "Ordinary sentence with no special characters, including punctuation like commas."));
+    }
 }

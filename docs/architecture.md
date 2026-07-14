@@ -98,9 +98,12 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 
 ### `DeepseekSummarizeClient`
 - Default summarization backend; shells out to the `opencode` CLI: `opencode run --model <model> --format json "<prompt>"` (model configurable via `opencode.summarize.model`, default `deepseek/deepseek-v4-flash`)
-- Sends the same "Summarize in 2-3 sentences" prompt as `OllamaSummarizeClient`
+- `opencode.command` defaults to `opencode.cmd`, not `opencode` — on Windows, `ProcessBuilder` does not do `cmd.exe`-style PATHEXT resolution of bare command names, so the npm `.cmd` shim must be named explicitly
+- Sends the same "Summarize in 2-3 sentences" instruction as `OllamaSummarizeClient`, but with a single-line `": "` separator instead of `":\n\n"` — `opencode.cmd` runs through `cmd.exe`, which truncates an argument at an embedded newline
+- Since `text` can originate from arbitrary scraped web pages and becomes a `cmd.exe`-routed argument, `sanitizeArgument()` strips characters `cmd.exe` treats specially (`& | < > ^ " %`, plus CR/LF) before building the prompt
+- Immediately closes the child process's stdin after starting it — `opencode` blocks reading stdin until EOF, and `ProcessBuilder` otherwise leaves it open indefinitely
 - Parses the CLI's newline-delimited JSON stdout via the static `extractSummary()` method, taking the last `"type":"text"` event's `part.text`
-- Times out after `opencode.summarize.timeout-seconds` (default 60s), destroying the process and returning `null`
+- Times out after `opencode.summarize.timeout-seconds` (default 60s), destroying the process and returning `null` (stdout is drained on a background thread so the timeout isn't defeated by a blocking read)
 - `isAvailable()` runs `opencode --version` and checks for a zero exit code
 
 ### `OllamaSummarizeClient`
