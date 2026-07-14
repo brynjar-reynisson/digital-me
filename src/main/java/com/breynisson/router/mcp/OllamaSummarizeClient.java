@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -18,6 +19,7 @@ import java.util.Map;
  * Returns {@code null} (and logs a warning) if Ollama is not reachable.
  */
 @Component
+@ConditionalOnProperty(prefix = "summarize", name = "provider", havingValue = "ollama")
 public class OllamaSummarizeClient implements SummarizeClient {
 
     private static final Logger log = LoggerFactory.getLogger(OllamaSummarizeClient.class);
