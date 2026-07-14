@@ -1,11 +1,14 @@
 import hashlib
 import json
+import re
 import tempfile
 from pathlib import Path
 
 # Inline the two pure functions so this file has no external imports
 SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
 BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
+LINKEDIN_FEED_PATTERN = re.compile(r"linkedin\.com/feed/?(?:[?#]|$)")
+QUORA_TOPIC_PATTERN = re.compile(r"quora\.com/topic/")
 
 def detect_site(window_title: str) -> tuple:
     lower = window_title.lower()
@@ -25,6 +28,9 @@ def has_subpath(url: str) -> bool:
     if idx == -1:
         return False
     return len(url[idx + len(".com/"):]) > 0
+
+def is_subpage_exempt(url: str) -> bool:
+    return bool(LINKEDIN_FEED_PATTERN.search(url)) or bool(QUORA_TOPIC_PATTERN.search(url))
 
 def test_detect_quora():
     pagename, browser, title = detect_site("Quora - A place to share knowledge - Google Chrome")
@@ -88,6 +94,33 @@ def test_has_subpath_query_string_root():
 def test_has_subpath_linkedin_profile():
     assert has_subpath("https://www.linkedin.com/in/someone/") is True
 
+def test_is_subpage_exempt_linkedin_feed():
+    assert is_subpage_exempt("https://www.linkedin.com/feed/") is True
+
+def test_is_subpage_exempt_linkedin_feed_no_trailing_slash():
+    assert is_subpage_exempt("https://www.linkedin.com/feed") is True
+
+def test_is_subpage_exempt_linkedin_feed_with_query():
+    assert is_subpage_exempt("https://www.linkedin.com/feed/?trk=nav_home") is True
+
+def test_is_subpage_exempt_linkedin_feedback_not_exempt():
+    assert is_subpage_exempt("https://www.linkedin.com/feedback/") is False
+
+def test_is_subpage_exempt_linkedin_profile_not_exempt():
+    assert is_subpage_exempt("https://www.linkedin.com/in/someone/") is False
+
+def test_is_subpage_exempt_quora_topic():
+    assert is_subpage_exempt("https://www.quora.com/topic/Artificial-Intelligence") is True
+
+def test_is_subpage_exempt_quora_topic_nested():
+    assert is_subpage_exempt("https://www.quora.com/topic/Artificial-Intelligence/answer/Someone") is True
+
+def test_is_subpage_exempt_quora_question_not_exempt():
+    assert is_subpage_exempt("https://www.quora.com/Some-Question-Title") is False
+
+def test_is_subpage_exempt_neither_site():
+    assert is_subpage_exempt("https://www.facebook.com/topic/") is False
+
 def test_state_roundtrip():
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         path = Path(f.name)
@@ -122,6 +155,15 @@ if __name__ == "__main__":
     test_has_subpath_no_dot_com_slash()
     test_has_subpath_query_string_root()
     test_has_subpath_linkedin_profile()
+    test_is_subpage_exempt_linkedin_feed()
+    test_is_subpage_exempt_linkedin_feed_no_trailing_slash()
+    test_is_subpage_exempt_linkedin_feed_with_query()
+    test_is_subpage_exempt_linkedin_feedback_not_exempt()
+    test_is_subpage_exempt_linkedin_profile_not_exempt()
+    test_is_subpage_exempt_quora_topic()
+    test_is_subpage_exempt_quora_topic_nested()
+    test_is_subpage_exempt_quora_question_not_exempt()
+    test_is_subpage_exempt_neither_site()
     test_state_roundtrip()
     test_load_state_missing_file()
     print("All tests passed.")
