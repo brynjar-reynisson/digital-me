@@ -7,6 +7,7 @@ from pathlib import Path
 
 import mss
 import requests
+import uiautomation as auto
 import win32gui
 from PIL import Image
 from winsdk.windows.graphics.imaging import (
@@ -21,6 +22,7 @@ STATE_FILE = Path(__file__).parent / "screenshot-capture-state.json"
 DIGITAL_ME_URL = "http://localhost:8080/addContent"
 SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
 BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
+SUBPAGE_CAPABLE_BROWSERS = {"chrome", "edge"}
 
 
 def detect_site(window_title: str) -> tuple[str | None, str | None, str]:
@@ -37,6 +39,17 @@ def detect_site(window_title: str) -> tuple[str | None, str | None, str]:
 def get_active_window() -> tuple[int, str]:
     hwnd = win32gui.GetForegroundWindow()
     return hwnd, win32gui.GetWindowText(hwnd)
+
+
+def get_address_bar_url(hwnd: int) -> str | None:
+    try:
+        window = auto.ControlFromHandle(hwnd)
+        edit = window.EditControl(Name="Address and search bar")
+        if not edit.Exists(0, 0):
+            return None
+        return edit.GetValuePattern().Value
+    except Exception:
+        return None
 
 
 def take_screenshot_bmp(hwnd: int) -> bytes:
