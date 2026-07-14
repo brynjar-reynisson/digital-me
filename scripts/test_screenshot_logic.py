@@ -20,6 +20,12 @@ def detect_site(window_title: str) -> tuple:
 def hash_bytes(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
 
+def has_subpath(url: str) -> bool:
+    idx = url.rfind(".com/")
+    if idx == -1:
+        return False
+    return len(url[idx + len(".com/"):]) > 0
+
 def test_detect_quora():
     pagename, browser, title = detect_site("Quora - A place to share knowledge - Google Chrome")
     assert pagename == "quora", f"expected quora, got {pagename}"
@@ -67,6 +73,21 @@ def test_hash_deterministic():
 def test_hash_distinct():
     assert hash_bytes(b"hello") != hash_bytes(b"world")
 
+def test_has_subpath_root_with_slash():
+    assert has_subpath("https://www.quora.com/") is False
+
+def test_has_subpath_subpage():
+    assert has_subpath("https://www.quora.com/Some-Question-Title") is True
+
+def test_has_subpath_no_dot_com_slash():
+    assert has_subpath("https://www.quora.com") is False
+
+def test_has_subpath_query_string_root():
+    assert has_subpath("https://www.linkedin.com/?ref=x") is True
+
+def test_has_subpath_linkedin_profile():
+    assert has_subpath("https://www.linkedin.com/in/someone/") is True
+
 def test_state_roundtrip():
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         path = Path(f.name)
@@ -96,6 +117,11 @@ if __name__ == "__main__":
     test_detect_microsoft_edge()
     test_hash_deterministic()
     test_hash_distinct()
+    test_has_subpath_root_with_slash()
+    test_has_subpath_subpage()
+    test_has_subpath_no_dot_com_slash()
+    test_has_subpath_query_string_root()
+    test_has_subpath_linkedin_profile()
     test_state_roundtrip()
     test_load_state_missing_file()
     print("All tests passed.")
