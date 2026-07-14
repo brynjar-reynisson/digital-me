@@ -1,0 +1,1 @@
+powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\Lenovo\restart-digital-me.ps1"

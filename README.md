@@ -76,3 +76,5 @@ as it's not available on Maven Central. It is used to extract captions from YouT
 │           └── application.properties
 └── pom.xml
 ```
+
+This line was added in agent-suite popup
