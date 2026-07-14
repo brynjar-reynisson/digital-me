@@ -122,7 +122,13 @@ def get_main_content_rect(hwnd: int) -> tuple[int, int, int, int] | None:
     try:
         window_rect = win32gui.GetWindowRect(hwnd)
         window = auto.ControlFromHandle(hwnd)
-        doc = window.DocumentControl()
+        # window.DocumentControl() alone matches an empty "WebView" shell element on both
+        # Chrome and Edge, not the real content DOM -- confirmed live: it has no landmark
+        # children, so find_main_landmark() could never succeed searching it. The real
+        # content lives under a sibling pane with the stable Chromium internal class name
+        # "Chrome_RenderWidgetHostHWND"; anchor the search there when present.
+        render_host = window.PaneControl(ClassName="Chrome_RenderWidgetHostHWND")
+        doc = render_host.DocumentControl() if render_host.Exists(0, 0) else window.DocumentControl()
         if not doc.Exists(0, 0):
             return None
         r = doc.BoundingRectangle

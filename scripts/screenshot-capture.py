@@ -31,8 +31,8 @@ CONTENT_CROP_LEFT_PCT = 0.20
 CONTENT_CROP_RIGHT_PCT = 0.20
 MIN_CROP_WIDTH = 100
 MIN_CROP_HEIGHT = 100
-UIA_LANDMARK_TYPE_PROPERTY_ID = 30154  # UIA_LandmarkTypePropertyId
-UIA_MAIN_LANDMARK_TYPE_ID = 80003      # UIA_MainLandmarkTypeId
+UIA_LANDMARK_TYPE_PROPERTY_ID = 30157  # UIA_LandmarkTypePropertyId
+UIA_MAIN_LANDMARK_TYPE_ID = 80002      # UIA_MainLandmarkTypeId
 MAX_LANDMARK_SEARCH_NODES = 500
 MAX_LANDMARK_SEARCH_DEPTH = 20
 
@@ -119,8 +119,11 @@ def find_main_landmark(doc_control) -> tuple[int, int, int, int] | None:
         except Exception:
             landmark_type = None
         if landmark_type == UIA_MAIN_LANDMARK_TYPE_ID:
-            rect = control.BoundingRectangle
-            return (rect.left, rect.top, rect.right, rect.bottom)
+            try:
+                rect = control.BoundingRectangle
+                return (rect.left, rect.top, rect.right, rect.bottom)
+            except Exception:
+                return None
         if depth < MAX_LANDMARK_SEARCH_DEPTH:
             try:
                 children = control.GetChildren()
@@ -135,7 +138,13 @@ def get_main_content_rect(hwnd: int) -> tuple[int, int, int, int] | None:
     try:
         window_rect = win32gui.GetWindowRect(hwnd)
         window = auto.ControlFromHandle(hwnd)
-        doc = window.DocumentControl()
+        # window.DocumentControl() alone matches an empty "WebView" shell element on both
+        # Chrome and Edge, not the real content DOM -- confirmed live: it has no landmark
+        # children, so find_main_landmark() could never succeed searching it. The real
+        # content lives under a sibling pane with the stable Chromium internal class name
+        # "Chrome_RenderWidgetHostHWND"; anchor the search there when present.
+        render_host = window.PaneControl(ClassName="Chrome_RenderWidgetHostHWND")
+        doc = render_host.DocumentControl() if render_host.Exists(0, 0) else window.DocumentControl()
         if not doc.Exists(0, 0):
             return None
         r = doc.BoundingRectangle
