@@ -1,3 +1,4 @@
+import datetime
 import hashlib
 import json
 import re
@@ -374,6 +375,25 @@ def test_merge_session_lines_preserves_existing_order():
     result = merge_session_lines(["z", "a"], "a\nnew")
     assert result == ["z", "a", "new"]
 
+def is_session_idle(last_capture_at: str, now, idle_timeout_seconds: int) -> bool:
+    last = datetime.datetime.fromisoformat(last_capture_at)
+    return (now - last).total_seconds() > idle_timeout_seconds
+
+def test_is_session_idle_true_when_over_threshold():
+    last = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    now = datetime.datetime(2026, 1, 1, 12, 2, 1)
+    assert is_session_idle(last.isoformat(), now, 120) is True
+
+def test_is_session_idle_false_when_under_threshold():
+    last = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    now = datetime.datetime(2026, 1, 1, 12, 1, 0)
+    assert is_session_idle(last.isoformat(), now, 120) is False
+
+def test_is_session_idle_exact_threshold_not_idle():
+    last = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    now = datetime.datetime(2026, 1, 1, 12, 2, 0)
+    assert is_session_idle(last.isoformat(), now, 120) is False
+
 if __name__ == "__main__":
     test_detect_quora()
     test_detect_linkedin()
@@ -429,4 +449,7 @@ if __name__ == "__main__":
     test_merge_session_lines_empty_existing()
     test_merge_session_lines_all_duplicates_no_change()
     test_merge_session_lines_preserves_existing_order()
+    test_is_session_idle_true_when_over_threshold()
+    test_is_session_idle_false_when_under_threshold()
+    test_is_session_idle_exact_threshold_not_idle()
     print("All tests passed.")

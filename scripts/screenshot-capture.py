@@ -268,6 +268,11 @@ def merge_session_lines(existing_lines: list[str], new_text: str) -> list[str]:
     return merged
 
 
+def is_session_idle(last_capture_at: str, now: datetime.datetime, idle_timeout_seconds: int) -> bool:
+    last = datetime.datetime.fromisoformat(last_capture_at)
+    return (now - last).total_seconds() > idle_timeout_seconds
+
+
 def preprocess_for_ocr(image: Image.Image) -> Image.Image:
     grayscale = image.convert("L")
     return grayscale.resize((grayscale.width * 2, grayscale.height * 2))
