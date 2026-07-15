@@ -11,7 +11,7 @@
 | `GET` | `/localFile?filePath=...` | Reads a local file and returns HTML-escaped content |
 | `POST` | `/addContent` | Indexes content; body: `{ source, name, content }` |
 
-`/addContent` uses a `ReentrantLock` for thread safety. If `source` starts with `http`, content is stripped to plain text via Jsoup before indexing.
+`/addContent` uses a `ReentrantLock` for thread safety. If `source` starts with `http`, content is stripped to plain text via Jsoup before indexing — unless `ScreenshotCoverage.isCovered()` determines the URL is a LinkedIn/Facebook/Quora page already captured more completely by the screenshot OCR pipeline, in which case the submission is silently discarded (still returns success, nothing is written or indexed).
 
 ---
 
@@ -173,5 +173,6 @@ Exposed at `/actuator`:
 - **OCR:** `run_ocr()` / `run_ocr_lines()` use Tesseract (`pytesseract`) with a fixed `"isl+eng"` combined language model, after a grayscale + 2x upscale preprocessing step (`preprocess_for_ocr()`) tuned for small screen-rendered UI text. Requires Tesseract installed via `winget install --id UB-Mannheim.TesseractOCR -e` with both `eng.traineddata` and `isl.traineddata` present in its `tessdata` folder.
 - **Line filtering:** when no landmark crop was found (`needs_line_filtering`), `run_ocr_filtered()` calls `run_ocr_lines()` to get per-line `(left, top, text)` positions, then `find_gap_threshold()` + `filter_and_sort_lines()` drop sidebar/nav text by finding the horizontal gap between the sidebar and main content columns.
 - **Dedup:** `screenshot-capture-state.json` tracks the last screenshot's hash and OCR'd text; unchanged captures are skipped rather than re-sent.
+- **Extension overlap:** the Chrome extension's plain-text page captures for LinkedIn/Facebook/Quora URLs already covered by this pipeline are discarded server-side by `ScreenshotCoverage.isCovered()` (see the `/addContent` description above) — it mirrors this script's own subpage-gating rules (facebook: any page; linkedin/quora: only root or their specific exempt subpath) so pages this script skips (e.g. individual LinkedIn articles, Quora answers) still get stored from the extension.
 - **Session consolidation:** consecutive captures of the same page are merged into one buffered session rather than sent individually. A session is keyed by the exact URL (`get_address_bar_url()`, chrome/edge only) or, when the URL can't be read, the site name. Each capture's OCR lines are appended to the session's line buffer with exact-string dedup (`merge_session_lines()`), so scrolled-past content accumulates in one place instead of being spread across many overlapping files. A session flushes (single `/addContent` POST via `flush_session()`) when a capture resolves to a different session key, or — as a safety net, checked every run via `check_idle_flush()` — when `IDLE_TIMEOUT_SECONDS` (120s) pass with no capture refreshing it, so a session isn't stranded if the browser is closed mid-session.
 - **Watcher loop:** `screenshot-capture.ps1` re-runs the script every 3 seconds, restarting itself if killed.
