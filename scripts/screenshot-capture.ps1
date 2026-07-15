@@ -21,5 +21,5 @@ while ($true) {
         $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         "$ts [EXCEPTION] $_" | Out-File -FilePath $logFile -Append -Encoding utf8
     }
-    Start-Sleep -Seconds 10
+    Start-Sleep -Seconds 3
 }
