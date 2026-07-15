@@ -67,6 +67,21 @@ def filter_and_sort_lines(lines: list, threshold) -> list:
     kept = [line for line in lines if threshold is None or line[0] >= threshold]
     return sorted(kept, key=lambda line: (line[1], line[0]))
 
+def group_words_into_lines(data: dict) -> list:
+    groups = {}
+    for i, text in enumerate(data["text"]):
+        if not text.strip():
+            continue
+        key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+        groups.setdefault(key, []).append((data["left"][i], data["top"][i], text))
+    lines = []
+    for words in groups.values():
+        left = min(w[0] for w in words)
+        top = min(w[1] for w in words)
+        text = " ".join(w[2] for w in words)
+        lines.append((float(left), float(top), text))
+    return lines
+
 MAX_LANDMARK_WIDTH_FRACTION = 0.80
 
 def landmark_too_wide(landmark_rect: tuple, doc_rect: tuple) -> bool:
@@ -207,6 +222,54 @@ def test_filter_and_sort_lines_sorts_out_of_order_input():
         (300.0, 50.0, "c"),
     ]
 
+def test_group_words_into_lines_joins_words_on_same_line():
+    data = {
+        "block_num": [1, 1, 1],
+        "par_num": [1, 1, 1],
+        "line_num": [1, 1, 1],
+        "left": [10, 60, 110],
+        "top": [5, 6, 5],
+        "text": ["Hello", "there", "world"],
+    }
+    assert group_words_into_lines(data) == [(10.0, 5.0, "Hello there world")]
+
+def test_group_words_into_lines_splits_separate_lines():
+    data = {
+        "block_num": [1, 1],
+        "par_num": [1, 1],
+        "line_num": [1, 2],
+        "left": [10, 15],
+        "top": [5, 40],
+        "text": ["First", "Second"],
+    }
+    assert group_words_into_lines(data) == [(10.0, 5.0, "First"), (15.0, 40.0, "Second")]
+
+def test_group_words_into_lines_skips_empty_and_whitespace_text():
+    data = {
+        "block_num": [1, 1, 1],
+        "par_num": [1, 1, 1],
+        "line_num": [1, 1, 1],
+        "left": [10, 999, 60],
+        "top": [5, 999, 6],
+        "text": ["Hello", "", "there"],
+    }
+    assert group_words_into_lines(data) == [(10.0, 5.0, "Hello there")]
+
+def test_group_words_into_lines_preserves_first_seen_order():
+    data = {
+        "block_num": [2, 1],
+        "par_num": [1, 1],
+        "line_num": [1, 1],
+        "left": [300, 10],
+        "top": [50, 5],
+        "text": ["Second", "First"],
+    }
+    assert group_words_into_lines(data) == [(300.0, 50.0, "Second"), (10.0, 5.0, "First")]
+
+def test_group_words_into_lines_empty_input_returns_empty_list():
+    data = {"block_num": [], "par_num": [], "line_num": [], "left": [], "top": [], "text": []}
+    assert group_words_into_lines(data) == []
+
 def test_content_rect_to_crop_box_inside_window():
     content_rect = (150, 100, 850, 700)
     window_rect = (100, 50, 1000, 800)
@@ -298,6 +361,11 @@ if __name__ == "__main__":
     test_filter_and_sort_lines_no_threshold_keeps_all_sorted()
     test_filter_and_sort_lines_threshold_drops_left_lines()
     test_filter_and_sort_lines_sorts_out_of_order_input()
+    test_group_words_into_lines_joins_words_on_same_line()
+    test_group_words_into_lines_splits_separate_lines()
+    test_group_words_into_lines_skips_empty_and_whitespace_text()
+    test_group_words_into_lines_preserves_first_seen_order()
+    test_group_words_into_lines_empty_input_returns_empty_list()
     test_content_rect_to_crop_box_inside_window()
     test_content_rect_to_crop_box_clamped()
     test_content_rect_to_crop_box_degenerate_returns_none()

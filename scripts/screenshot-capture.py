@@ -145,6 +145,22 @@ def filter_and_sort_lines(lines: list[tuple[float, float, str]], threshold: floa
     return sorted(kept, key=lambda line: (line[1], line[0]))
 
 
+def group_words_into_lines(data: dict) -> list[tuple[float, float, str]]:
+    groups: dict[tuple[int, int, int], list[tuple[int, int, str]]] = {}
+    for i, text in enumerate(data["text"]):
+        if not text.strip():
+            continue
+        key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+        groups.setdefault(key, []).append((data["left"][i], data["top"][i], text))
+    lines = []
+    for words in groups.values():
+        left = min(w[0] for w in words)
+        top = min(w[1] for w in words)
+        text = " ".join(w[2] for w in words)
+        lines.append((float(left), float(top), text))
+    return lines
+
+
 def landmark_too_wide(landmark_rect: tuple[int, int, int, int], doc_rect: tuple[int, int, int, int]) -> bool:
     landmark_width = landmark_rect[2] - landmark_rect[0]
     doc_width = doc_rect[2] - doc_rect[0]
