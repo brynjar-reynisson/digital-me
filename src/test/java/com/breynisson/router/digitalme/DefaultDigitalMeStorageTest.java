@@ -157,6 +157,64 @@ class DefaultDigitalMeStorageTest {
         cleanupDb("https://www.linkedin.com/pulse/some-article");
     }
 
+    @Test
+    void addContentExtractsVisirArticleBody() {
+        String html = """
+                <html>
+                <body>
+                <nav>Home News Sports Weather Opinion Most Read: Some Other Story</nav>
+                <article class="article-single -sport">
+                    <header class="article-single__header">
+                        <h1>Team Wins Championship Final</h1>
+                    </header>
+                    <div class="article-single__content">
+                        <article>
+                            <div itemprop="articleBody">
+                                <p>The home team secured a dramatic victory in the final minutes.</p>
+                            </div>
+                        </article>
+                    </div>
+                </article>
+                <div class="article-item">Most Read: Unrelated Story About Something Else</div>
+                </body>
+                </html>
+                """;
+        AddContentRequest req = request("https://www.visir.is/g/123/team-wins-championship", "Team Wins", html);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertEquals(1, storage.search("dramatic").results().size());
+        assertTrue(storage.search("Unrelated").results().isEmpty());
+
+        cleanupDb("https://www.visir.is/g/123/team-wins-championship");
+    }
+
+    @Test
+    void addContentDiscardsVisirFrontPage() {
+        cleanupDb("https://www.visir.is");
+        storage.addContent(request("http://unrelated-visir-seed.com", "Unrelated", "unrelated seed content"));
+
+        String html = """
+                <html>
+                <body>
+                <nav>Home News Sports Weather Opinion</nav>
+                <div class="article-item"><a href="/g/1">Team Wins Championship Final</a></div>
+                <div class="article-item"><a href="/g/2">Another Unrelated Story</a></div>
+                </body>
+                </html>
+                """;
+        AddContentRequest req = request("https://www.visir.is", "Visir Front Page", html);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertTrue(TextEntryDao.findByName("https://www.visir.is").isEmpty());
+        assertTrue(storage.search("Championship").results().isEmpty());
+
+        cleanupDb("http://unrelated-visir-seed.com");
+    }
+
     private static AddContentRequest request(String source, String name, String content) {
         return AddContentRequests.of(source, name, content);
     }

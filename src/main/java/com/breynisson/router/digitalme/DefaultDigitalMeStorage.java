@@ -1,5 +1,7 @@
 package com.breynisson.router.digitalme;
 
+import com.breynisson.router.extract.PageHandler;
+import com.breynisson.router.extract.PageHandlers;
 import com.breynisson.router.extract.YouTubeCaptionExtractor;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.lucene.LuceneIndex;
@@ -13,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -50,14 +53,19 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
                     contentResponse.setSuccess(true);
                     return contentResponse;
                 }
-                if (addContentRequest.getSource().startsWith("https://www.youtube.com")) {
+                Optional<PageHandler> handler = PageHandlers.find(addContentRequest.getSource());
+                if (handler.isPresent()) {
+                    String extracted = handler.get().extract(Jsoup.parse(content));
+                    if (extracted == null) {
+                        log.info("Discarding content with no extractable body: {}", addContentRequest.getSource());
+                        contentResponse.setSuccess(true);
+                        return contentResponse;
+                    }
+                    content = normalize(extracted);
+                } else if (addContentRequest.getSource().startsWith("https://www.youtube.com")) {
                     content = new YouTubeCaptionExtractor().extractFromYouTubeUrl(addContentRequest.getSource());
                 } else {
-                    content = Jsoup.parse(content).text();
-                    content = content.replace("\\n", " ");
-                    content = content.replace("\\t", " ");
-                    content = content.replace("\\r", " ");
-                    content = content.replaceAll("\\s+", " ").strip();
+                    content = normalize(Jsoup.parse(content).text());
                 }
                 addContentRequest.setContent(content);
             }
@@ -74,5 +82,12 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
             lock.unlock();
         }
         return contentResponse;
+    }
+
+    private static String normalize(String content) {
+        String normalized = content.replace("\\n", " ");
+        normalized = normalized.replace("\\t", " ");
+        normalized = normalized.replace("\\r", " ");
+        return normalized.replaceAll("\\s+", " ").strip();
     }
 }
