@@ -273,6 +273,31 @@ def is_session_idle(last_capture_at: str, now: datetime.datetime, idle_timeout_s
     return (now - last).total_seconds() > idle_timeout_seconds
 
 
+def start_session(session_key: str, pagename: str, window_title: str, now: datetime.datetime) -> dict:
+    timestamp = now.isoformat()
+    return {
+        "key": session_key,
+        "pagename": pagename,
+        "window_title": window_title,
+        "started_at": timestamp,
+        "last_capture_at": timestamp,
+        "lines": [],
+    }
+
+
+def resolve_active_session(
+    state: dict, pagename: str, window_title: str, session_key: str, now: datetime.datetime
+) -> tuple[dict, dict | None]:
+    active_session = state.get("active_session")
+    session_to_flush = None
+    if active_session is not None and active_session["key"] != session_key:
+        session_to_flush = active_session
+        active_session = None
+    if active_session is None:
+        active_session = start_session(session_key, pagename, window_title, now)
+    return active_session, session_to_flush
+
+
 def preprocess_for_ocr(image: Image.Image) -> Image.Image:
     grayscale = image.convert("L")
     return grayscale.resize((grayscale.width * 2, grayscale.height * 2))

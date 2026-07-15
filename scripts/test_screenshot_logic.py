@@ -394,6 +394,63 @@ def test_is_session_idle_exact_threshold_not_idle():
     now = datetime.datetime(2026, 1, 1, 12, 2, 0)
     assert is_session_idle(last.isoformat(), now, 120) is False
 
+def start_session(session_key: str, pagename: str, window_title: str, now) -> dict:
+    timestamp = now.isoformat()
+    return {
+        "key": session_key,
+        "pagename": pagename,
+        "window_title": window_title,
+        "started_at": timestamp,
+        "last_capture_at": timestamp,
+        "lines": [],
+    }
+
+def test_start_session_shape():
+    now = datetime.datetime(2026, 7, 15, 16, 44, 32)
+    session = start_session("https://www.linkedin.com/feed/", "linkedin", "Feed | LinkedIn", now)
+    assert session == {
+        "key": "https://www.linkedin.com/feed/",
+        "pagename": "linkedin",
+        "window_title": "Feed | LinkedIn",
+        "started_at": now.isoformat(),
+        "last_capture_at": now.isoformat(),
+        "lines": [],
+    }
+
+def resolve_active_session(state: dict, pagename: str, window_title: str, session_key: str, now):
+    active_session = state.get("active_session")
+    session_to_flush = None
+    if active_session is not None and active_session["key"] != session_key:
+        session_to_flush = active_session
+        active_session = None
+    if active_session is None:
+        active_session = start_session(session_key, pagename, window_title, now)
+    return active_session, session_to_flush
+
+def test_resolve_active_session_starts_new_when_none():
+    now = datetime.datetime(2026, 7, 15, 16, 44, 32)
+    session, to_flush = resolve_active_session({}, "linkedin", "Feed | LinkedIn", "linkedin-key", now)
+    assert session["key"] == "linkedin-key"
+    assert session["lines"] == []
+    assert to_flush is None
+
+def test_resolve_active_session_continues_when_key_matches():
+    existing = {"key": "linkedin-key", "pagename": "linkedin", "window_title": "t",
+                "started_at": "2026-07-15T16:00:00", "last_capture_at": "2026-07-15T16:00:00", "lines": ["a"]}
+    now = datetime.datetime(2026, 7, 15, 16, 1, 0)
+    session, to_flush = resolve_active_session({"active_session": existing}, "linkedin", "t", "linkedin-key", now)
+    assert session is existing
+    assert to_flush is None
+
+def test_resolve_active_session_flushes_old_when_key_changes():
+    existing = {"key": "old-key", "pagename": "linkedin", "window_title": "t",
+                "started_at": "2026-07-15T16:00:00", "last_capture_at": "2026-07-15T16:00:00", "lines": ["a"]}
+    now = datetime.datetime(2026, 7, 15, 16, 1, 0)
+    session, to_flush = resolve_active_session({"active_session": existing}, "linkedin", "t", "new-key", now)
+    assert to_flush is existing
+    assert session["key"] == "new-key"
+    assert session["lines"] == []
+
 if __name__ == "__main__":
     test_detect_quora()
     test_detect_linkedin()
@@ -452,4 +509,8 @@ if __name__ == "__main__":
     test_is_session_idle_true_when_over_threshold()
     test_is_session_idle_false_when_under_threshold()
     test_is_session_idle_exact_threshold_not_idle()
+    test_start_session_shape()
+    test_resolve_active_session_starts_new_when_none()
+    test_resolve_active_session_continues_when_key_matches()
+    test_resolve_active_session_flushes_old_when_key_changes()
     print("All tests passed.")
