@@ -215,6 +215,47 @@ class DefaultDigitalMeStorageTest {
         cleanupDb("http://unrelated-visir-seed.com");
     }
 
+    @Test
+    void addContentExtractsVisirArticleBodyFromRealExtensionPayloadShape() throws com.fasterxml.jackson.core.JsonProcessingException {
+        String html = """
+                <html>
+                <body>
+                <nav>Home News Sports Weather Opinion Most Read: Some Other Story</nav>
+                <article class="article-single -sport">
+                    <header class="article-single__header">
+                        <h1>Team Wins Championship Final</h1>
+                    </header>
+                    <div class="article-single__content">
+                        <article>
+                            <div itemprop="articleBody">
+                                <p>The home team secured a dramatic victory in the final minutes.</p>
+                            </div>
+                        </article>
+                    </div>
+                </article>
+                <div class="article-item">Most Read: Unrelated Story About Something Else</div>
+                </body>
+                </html>
+                """;
+        // Reproduces exactly what the server receives: content-script.js does
+        // JSON.stringify(document.body.innerHTML), background.js wraps the whole
+        // request in JSON.stringify(request) again, and Jackson decodes only the
+        // outer envelope -- so getContent() is still JSON-string-escaped HTML,
+        // not real HTML. ObjectMapper.writeValueAsString(html) reproduces that
+        // single remaining layer of escaping exactly.
+        String extensionShapedPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(html);
+        AddContentRequest req = request("https://www.visir.is/g/456/team-wins-championship", "Team Wins", extensionShapedPayload);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertEquals(1, storage.search("dramatic").results().size());
+        assertTrue(storage.search("Unrelated").results().isEmpty());
+        assertFalse(TextEntryDao.findByName("https://www.visir.is/g/456/team-wins-championship").isEmpty());
+
+        cleanupDb("https://www.visir.is/g/456/team-wins-championship");
+    }
+
     private static AddContentRequest request(String source, String name, String content) {
         return AddContentRequests.of(source, name, content);
     }

@@ -8,6 +8,8 @@ import com.breynisson.router.lucene.LuceneIndex;
 import com.breynisson.router.mcp.EmbeddingIndex;
 import com.breynisson.router.mcp.ResourceReceiver;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jsoup.Jsoup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +25,7 @@ import java.util.concurrent.locks.ReentrantLock;
 public class DefaultDigitalMeStorage implements DigitalMeStorage {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultDigitalMeStorage.class);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final Lock lock = new ReentrantLock();
     private final ResourceReceiver resourceReceiver;
@@ -53,6 +56,7 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
                     contentResponse.setSuccess(true);
                     return contentResponse;
                 }
+                content = decodeIfJsonEncoded(content);
                 Optional<PageHandler> handler = PageHandlers.find(addContentRequest.getSource());
                 if (handler.isPresent()) {
                     String extracted = handler.get().extract(Jsoup.parse(content));
@@ -82,6 +86,24 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
             lock.unlock();
         }
         return contentResponse;
+    }
+
+    // The Chrome extension double-JSON-encodes page content: content-script.js sends
+    // JSON.stringify(document.body.innerHTML), then background.js wraps the whole
+    // request in JSON.stringify(request) again. Jackson decodes only the outer
+    // envelope, so getContent() is still a JSON-quoted string, not real HTML --
+    // decode that one remaining layer before any HTML parsing happens. Content that
+    // isn't JSON-string-shaped (e.g. plain HTML from a future/non-extension producer)
+    // passes through unchanged.
+    private static String decodeIfJsonEncoded(String content) {
+        if (content == null || content.isEmpty() || content.charAt(0) != '"') {
+            return content;
+        }
+        try {
+            return OBJECT_MAPPER.readValue(content, String.class);
+        } catch (JsonProcessingException e) {
+            return content;
+        }
     }
 
     private static String normalize(String content) {
