@@ -1,4 +1,3 @@
-import asyncio
 import ctypes
 import datetime
 import hashlib
@@ -7,18 +6,13 @@ import json
 import re
 from pathlib import Path
 
+import pytesseract
 import requests
 import uiautomation as auto
 import win32gui
 import win32ui
 from PIL import Image
-from winsdk.windows.graphics.imaging import (
-    BitmapAlphaMode,
-    BitmapDecoder,
-    BitmapPixelFormat,
-)
-from winsdk.windows.media.ocr import OcrEngine
-from winsdk.windows.storage.streams import DataWriter, InMemoryRandomAccessStream
+from pytesseract import Output
 
 STATE_FILE = Path(__file__).parent / "screenshot-capture-state.json"
 DIGITAL_ME_URL = "http://localhost:8080/addContent"
@@ -32,6 +26,8 @@ CROP_CONTENT_SITES = {"quora", "linkedin", "facebook"}
 MIN_CROP_WIDTH = 100
 MIN_CROP_HEIGHT = 100
 PW_RENDERFULLCONTENT = 0x00000002  # required to capture GPU-composited windows (e.g. Chromium)
+TESSERACT_LANG = "isl+eng"
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 UIA_LANDMARK_TYPE_PROPERTY_ID = 30157  # UIA_LandmarkTypePropertyId
 UIA_MAIN_LANDMARK_TYPE_ID = 80002      # UIA_MainLandmarkTypeId
 MAX_LANDMARK_SEARCH_NODES = 500
@@ -256,52 +252,15 @@ def preprocess_for_ocr(image: Image.Image) -> Image.Image:
     return grayscale.resize((grayscale.width * 2, grayscale.height * 2))
 
 
-async def _decode_to_bitmap(bmp_bytes: bytes):
-    stream = InMemoryRandomAccessStream()
-    writer = DataWriter(stream)
-    writer.write_bytes(bmp_bytes)
-    await writer.store_async()
-    writer.detach_stream()
-    stream.seek(0)
-    decoder = await BitmapDecoder.create_async(stream)
-    # OcrEngine requires Bgra8 / Premultiplied format
-    return await decoder.get_software_bitmap_async(
-        BitmapPixelFormat.BGRA8, BitmapAlphaMode.PREMULTIPLIED
-    )
-
-
-async def _ocr_async(bmp_bytes: bytes) -> str:
-    bitmap = await _decode_to_bitmap(bmp_bytes)
-    engine = OcrEngine.try_create_from_user_profile_languages()
-    if engine is None:
-        return ""
-    result = await engine.recognize_async(bitmap)
-    return result.text
-
-
 def run_ocr(bmp_bytes: bytes) -> str:
-    return asyncio.run(_ocr_async(bmp_bytes))
-
-
-async def _ocr_lines_async(bmp_bytes: bytes) -> list[tuple[float, float, str]]:
-    bitmap = await _decode_to_bitmap(bmp_bytes)
-    engine = OcrEngine.try_create_from_user_profile_languages()
-    if engine is None:
-        return []
-    result = await engine.recognize_async(bitmap)
-    lines = []
-    for line in result.lines:
-        words = list(line.words)
-        if not words:
-            continue
-        left = min(w.bounding_rect.x for w in words)
-        top = min(w.bounding_rect.y for w in words)
-        lines.append((left, top, line.text))
-    return lines
+    image = preprocess_for_ocr(Image.open(io.BytesIO(bmp_bytes)))
+    return pytesseract.image_to_string(image, lang=TESSERACT_LANG)
 
 
 def run_ocr_lines(bmp_bytes: bytes) -> list[tuple[float, float, str]]:
-    return asyncio.run(_ocr_lines_async(bmp_bytes))
+    image = preprocess_for_ocr(Image.open(io.BytesIO(bmp_bytes)))
+    data = pytesseract.image_to_data(image, lang=TESSERACT_LANG, output_type=Output.DICT)
+    return group_words_into_lines(data)
 
 
 def run_ocr_filtered(bmp_bytes: bytes) -> str:
