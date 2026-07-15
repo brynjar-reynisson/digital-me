@@ -21,7 +21,7 @@ allowed-tools: Bash(npx kill-port *) Bash(powershell.exe *)
    ```
    powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\Lenovo\restart-digital-me.ps1"
    ```
-   This script itself kills ports 5174/8080 again, then starts the jar (`--data.dir=C:\Users\Lenovo\DigitalMe`) and the frontend dev server (`npm run dev`) as hidden background processes.
+   This script itself kills ports 5174/8080 again, then starts the jar (`--data.dir=C:\Users\Lenovo\DigitalMe`), the frontend dev server (`npm run dev`), and the `screenshot-capture.ps1` watcher loop, all as hidden background processes.
 
 ## Notes
 
