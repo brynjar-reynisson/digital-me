@@ -4,6 +4,8 @@ import re
 import tempfile
 from pathlib import Path
 
+from PIL import Image
+
 # Inline the two pure functions so this file has no external imports
 SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
 # Order matters: "chrome" must precede "edge" so titles like "...share knowledge -
@@ -81,6 +83,10 @@ def group_words_into_lines(data: dict) -> list:
         text = " ".join(w[2] for w in words)
         lines.append((float(left), float(top), text))
     return lines
+
+def preprocess_for_ocr(image):
+    grayscale = image.convert("L")
+    return grayscale.resize((grayscale.width * 2, grayscale.height * 2))
 
 MAX_LANDMARK_WIDTH_FRACTION = 0.80
 
@@ -270,6 +276,12 @@ def test_group_words_into_lines_empty_input_returns_empty_list():
     data = {"block_num": [], "par_num": [], "line_num": [], "left": [], "top": [], "text": []}
     assert group_words_into_lines(data) == []
 
+def test_preprocess_for_ocr_converts_to_grayscale_and_upscales():
+    original = Image.new("RGB", (10, 20), color=(255, 0, 0))
+    result = preprocess_for_ocr(original)
+    assert result.mode == "L"
+    assert result.size == (20, 40)
+
 def test_content_rect_to_crop_box_inside_window():
     content_rect = (150, 100, 850, 700)
     window_rect = (100, 50, 1000, 800)
@@ -366,6 +378,7 @@ if __name__ == "__main__":
     test_group_words_into_lines_skips_empty_and_whitespace_text()
     test_group_words_into_lines_preserves_first_seen_order()
     test_group_words_into_lines_empty_input_returns_empty_list()
+    test_preprocess_for_ocr_converts_to_grayscale_and_upscales()
     test_content_rect_to_crop_box_inside_window()
     test_content_rect_to_crop_box_clamped()
     test_content_rect_to_crop_box_degenerate_returns_none()

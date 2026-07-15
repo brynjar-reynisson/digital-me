@@ -251,6 +251,11 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
 
 
+def preprocess_for_ocr(image: Image.Image) -> Image.Image:
+    grayscale = image.convert("L")
+    return grayscale.resize((grayscale.width * 2, grayscale.height * 2))
+
+
 async def _decode_to_bitmap(bmp_bytes: bytes):
     stream = InMemoryRandomAccessStream()
     writer = DataWriter(stream)
