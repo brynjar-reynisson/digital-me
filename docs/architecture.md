@@ -161,3 +161,16 @@ Exposed at `/actuator`:
 - `health` — `GET /actuator/health`
 - `info` — `GET /actuator/info`
 - `camelroutes` — `GET /actuator/camelroutes` (read-only)
+
+---
+
+## Screenshot OCR capture (`scripts/`)
+
+`scripts/screenshot-capture.py` watches the active foreground browser window (Chrome/Edge/Firefox/Opera/Brave) and, when it's a recognized site (LinkedIn, Quora, Facebook — see `SITE_KEYWORDS`), captures and OCRs its content into digital-me via `/addContent`.
+
+- **Capture:** `take_screenshot_bmp()` uses the Win32 `PrintWindow` API (`PW_RENDERFULLCONTENT`) to render directly from the target window's own surface, rather than copying on-screen pixels — this makes it immune to other windows visually overlapping the target at capture time.
+- **Crop:** for Quora/LinkedIn/Facebook, `get_main_content_rect()` uses UI Automation to find the page's main content landmark (falling back to the whole document if none is found) and crops to it, via `content_rect_to_crop_box()`.
+- **OCR:** `run_ocr()` / `run_ocr_lines()` use Tesseract (`pytesseract`) with a fixed `"isl+eng"` combined language model, after a grayscale + 2x upscale preprocessing step (`preprocess_for_ocr()`) tuned for small screen-rendered UI text. Requires Tesseract installed via `winget install --id UB-Mannheim.TesseractOCR -e` with both `eng.traineddata` and `isl.traineddata` present in its `tessdata` folder.
+- **Line filtering:** when no landmark crop was found (`needs_line_filtering`), `run_ocr_filtered()` calls `run_ocr_lines()` to get per-line `(left, top, text)` positions, then `find_gap_threshold()` + `filter_and_sort_lines()` drop sidebar/nav text by finding the horizontal gap between the sidebar and main content columns.
+- **Dedup:** `screenshot-capture-state.json` tracks the last screenshot's hash and OCR'd text; unchanged captures are skipped rather than re-sent.
+- **Watcher loop:** `screenshot-capture.ps1` re-runs the script every 3 seconds, restarting itself if killed.
