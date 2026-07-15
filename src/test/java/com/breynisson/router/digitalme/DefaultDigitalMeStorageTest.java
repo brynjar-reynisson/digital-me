@@ -129,6 +129,34 @@ class DefaultDigitalMeStorageTest {
         cleanupDb("http://c.com");
     }
 
+    @Test
+    void addContentDiscardsCoveredScreenshotUrl() {
+        cleanupDb("https://www.facebook.com/somepost");
+        storage.addContent(request("http://unrelated.com", "Unrelated", "unrelated seed content"));
+
+        AddContentRequest req = request("https://www.facebook.com/somepost", "Facebook Post", "some facebook post text");
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertTrue(storage.search("facebook").results().isEmpty());
+        assertTrue(TextEntryDao.findByName("https://www.facebook.com/somepost").isEmpty());
+
+        cleanupDb("http://unrelated.com");
+    }
+
+    @Test
+    void addContentStoresUncoveredLinkedinSubpage() {
+        AddContentRequest req = request("https://www.linkedin.com/pulse/some-article", "Some Article", "article body text");
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertEquals(1, storage.search("article").results().size());
+        assertFalse(TextEntryDao.findByName("https://www.linkedin.com/pulse/some-article").isEmpty());
+
+        cleanupDb("https://www.linkedin.com/pulse/some-article");
+    }
+
     private static AddContentRequest request(String source, String name, String content) {
         return AddContentRequests.of(source, name, content);
     }

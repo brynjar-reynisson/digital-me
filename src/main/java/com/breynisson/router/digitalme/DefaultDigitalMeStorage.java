@@ -45,6 +45,11 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
             log.info("addContent: {}", addContentRequest.getSource());
             String content = addContentRequest.getContent();
             if (addContentRequest.getSource().startsWith("http")) {
+                if (ScreenshotCoverage.isCovered(addContentRequest.getSource())) {
+                    log.info("Discarding extension content already covered by screenshot capture: {}", addContentRequest.getSource());
+                    contentResponse.setSuccess(true);
+                    return contentResponse;
+                }
                 if (addContentRequest.getSource().startsWith("https://www.youtube.com")) {
                     content = new YouTubeCaptionExtractor().extractFromYouTubeUrl(addContentRequest.getSource());
                 } else {
