@@ -1,5 +1,5 @@
 pywin32
-winsdk
 Pillow
 requests
 uiautomation
+pytesseract
