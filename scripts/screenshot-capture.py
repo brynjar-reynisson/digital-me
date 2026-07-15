@@ -27,6 +27,8 @@ MIN_CROP_WIDTH = 100
 MIN_CROP_HEIGHT = 100
 PW_RENDERFULLCONTENT = 0x00000002  # required to capture GPU-composited windows (e.g. Chromium)
 TESSERACT_LANG = "isl+eng"
+# Required module-level side effect: configures the pytesseract wrapper to find the
+# Tesseract executable; not just a constant declaration.
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 UIA_LANDMARK_TYPE_PROPERTY_ID = 30157  # UIA_LandmarkTypePropertyId
 UIA_MAIN_LANDMARK_TYPE_ID = 80002      # UIA_MainLandmarkTypeId
@@ -142,6 +144,8 @@ def filter_and_sort_lines(lines: list[tuple[float, float, str]], threshold: floa
 
 
 def group_words_into_lines(data: dict) -> list[tuple[float, float, str]]:
+    # Groups on (block_num, par_num, line_num); page_num is intentionally omitted since
+    # it's always 1 for single-image OCR.
     groups: dict[tuple[int, int, int], list[tuple[int, int, str]]] = {}
     for i, text in enumerate(data["text"]):
         if not text.strip():
@@ -260,7 +264,11 @@ def run_ocr(bmp_bytes: bytes) -> str:
 def run_ocr_lines(bmp_bytes: bytes) -> list[tuple[float, float, str]]:
     image = preprocess_for_ocr(Image.open(io.BytesIO(bmp_bytes)))
     data = pytesseract.image_to_data(image, lang=TESSERACT_LANG, output_type=Output.DICT)
-    return group_words_into_lines(data)
+    lines = group_words_into_lines(data)
+    # preprocess_for_ocr upscales 2x for OCR accuracy; rescale coordinates back down to
+    # the original screenshot resolution so find_gap_threshold's absolute pixel constant
+    # (MIN_GAP_FOR_SPLIT_PX, calibrated pre-upscaling) still applies correctly.
+    return [(left / 2, top / 2, text) for left, top, text in lines]
 
 
 def run_ocr_filtered(bmp_bytes: bytes) -> str:
