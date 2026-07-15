@@ -451,6 +451,34 @@ def test_resolve_active_session_flushes_old_when_key_changes():
     assert session["key"] == "new-key"
     assert session["lines"] == []
 
+def check_idle_flush(state: dict, now, idle_timeout_seconds: int):
+    active_session = state.get("active_session")
+    if active_session is None or not is_session_idle(active_session["last_capture_at"], now, idle_timeout_seconds):
+        return state, None
+    new_state = dict(state)
+    new_state["active_session"] = None
+    return new_state, active_session
+
+def test_check_idle_flush_no_active_session():
+    now = datetime.datetime(2026, 7, 15, 16, 44, 32)
+    state, to_flush = check_idle_flush({}, now, 120)
+    assert to_flush is None
+    assert state == {}
+
+def test_check_idle_flush_not_idle_yet():
+    session = {"key": "k", "last_capture_at": "2026-07-15T16:44:00", "lines": ["a"]}
+    now = datetime.datetime(2026, 7, 15, 16, 45, 0)
+    state, to_flush = check_idle_flush({"active_session": session}, now, 120)
+    assert to_flush is None
+    assert state["active_session"] is session
+
+def test_check_idle_flush_idle_flushes_and_clears():
+    session = {"key": "k", "last_capture_at": "2026-07-15T16:44:00", "lines": ["a"]}
+    now = datetime.datetime(2026, 7, 15, 16, 47, 0)
+    state, to_flush = check_idle_flush({"active_session": session}, now, 120)
+    assert to_flush is session
+    assert state["active_session"] is None
+
 if __name__ == "__main__":
     test_detect_quora()
     test_detect_linkedin()
@@ -513,4 +541,7 @@ if __name__ == "__main__":
     test_resolve_active_session_starts_new_when_none()
     test_resolve_active_session_continues_when_key_matches()
     test_resolve_active_session_flushes_old_when_key_changes()
+    test_check_idle_flush_no_active_session()
+    test_check_idle_flush_not_idle_yet()
+    test_check_idle_flush_idle_flushes_and_clears()
     print("All tests passed.")

@@ -298,6 +298,17 @@ def resolve_active_session(
     return active_session, session_to_flush
 
 
+def check_idle_flush(
+    state: dict, now: datetime.datetime, idle_timeout_seconds: int
+) -> tuple[dict, dict | None]:
+    active_session = state.get("active_session")
+    if active_session is None or not is_session_idle(active_session["last_capture_at"], now, idle_timeout_seconds):
+        return state, None
+    new_state = dict(state)
+    new_state["active_session"] = None
+    return new_state, active_session
+
+
 def preprocess_for_ocr(image: Image.Image) -> Image.Image:
     grayscale = image.convert("L")
     return grayscale.resize((grayscale.width * 2, grayscale.height * 2))
