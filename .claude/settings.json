@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/scripts/checkstyle-hook.sh",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/scripts/checkstyle-hook.sh\"",
             "timeout": 60000
           }
         ]
