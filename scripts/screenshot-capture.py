@@ -251,6 +251,13 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
 
 
+IDLE_TIMEOUT_SECONDS = 120
+
+
+def derive_session_key(pagename: str, url: str | None) -> str:
+    return url if url else pagename
+
+
 def preprocess_for_ocr(image: Image.Image) -> Image.Image:
     grayscale = image.convert("L")
     return grayscale.resize((grayscale.width * 2, grayscale.height * 2))

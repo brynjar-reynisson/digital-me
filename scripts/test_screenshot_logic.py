@@ -340,6 +340,15 @@ def test_load_state_missing_file():
         state = json.loads(path.read_text(encoding="utf-8"))
     assert state == {"last_hash": None, "last_sent_text": None}
 
+def derive_session_key(pagename: str, url: str | None) -> str:
+    return url if url else pagename
+
+def test_derive_session_key_uses_url_when_present():
+    assert derive_session_key("linkedin", "https://www.linkedin.com/feed/") == "https://www.linkedin.com/feed/"
+
+def test_derive_session_key_falls_back_to_pagename_when_no_url():
+    assert derive_session_key("linkedin", None) == "linkedin"
+
 if __name__ == "__main__":
     test_detect_quora()
     test_detect_linkedin()
@@ -389,4 +398,6 @@ if __name__ == "__main__":
     test_landmark_too_wide_zero_doc_width()
     test_state_roundtrip()
     test_load_state_missing_file()
+    test_derive_session_key_uses_url_when_present()
+    test_derive_session_key_falls_back_to_pagename_when_no_url()
     print("All tests passed.")
