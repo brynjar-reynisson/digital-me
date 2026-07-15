@@ -244,7 +244,7 @@ def load_state() -> dict:
             return json.loads(STATE_FILE.read_text(encoding="utf-8"))
         except Exception:
             pass
-    return {"last_hash": None, "last_sent_text": None}
+    return {"last_hash": None, "last_processed_text": None}
 
 
 def save_state(state: dict) -> None:
@@ -345,24 +345,54 @@ def send_to_digital_me(source: str, name: str, content: str) -> None:
     resp.raise_for_status()
 
 
+def flush_session(session: dict) -> None:
+    if not session["lines"]:
+        return
+    merged_text = "\n".join(session["lines"])
+    started = datetime.datetime.fromisoformat(session["started_at"])
+    timestamp = started.strftime("%Y%m%d_%H%M%S")
+    entry_name = f"screenshot_{session['pagename']}_{timestamp}"
+    send_to_digital_me(session["window_title"], entry_name, merged_text)
+
+
 def main() -> None:
+    now = datetime.datetime.now()
+    state = load_state()
+
+    # Runs regardless of what's currently in the foreground, so a session isn't
+    # stranded forever if the user never returns to that tab (e.g. closes the browser).
+    state, stale_session = check_idle_flush(state, now, IDLE_TIMEOUT_SECONDS)
+    if stale_session is not None:
+        flush_session(stale_session)
+        save_state(state)
+
     hwnd, title = get_active_window()
     pagename, browser, window_title = detect_site(title)
     if pagename is None:
         return
-    if pagename in SUBPAGE_GATED_SITES and browser in UIA_CAPABLE_BROWSERS:
-        url = get_address_bar_url(hwnd)
-        if url is not None and has_subpath(url) and not is_subpage_exempt(url):
-            return
+
+    url = get_address_bar_url(hwnd) if browser in UIA_CAPABLE_BROWSERS else None
+    if pagename in SUBPAGE_GATED_SITES and url is not None and has_subpath(url) and not is_subpage_exempt(url):
+        return
+
     crop_box = None
     needs_line_filtering = False
     if pagename in CROP_CONTENT_SITES and browser in UIA_CAPABLE_BROWSERS:
         crop_box, needs_line_filtering = get_main_content_rect(hwnd)
     bmp_bytes = take_screenshot_bmp(hwnd, crop_box)
     current_hash = hash_bytes(bmp_bytes)
+    session_key = derive_session_key(pagename, url)
 
-    state = load_state()
     if current_hash == state.get("last_hash"):
+        # Nothing changed on screen, but the user may just be reading without
+        # scrolling -- keep the session alive rather than letting it idle out.
+        active_session, session_to_flush = resolve_active_session(state, pagename, window_title, session_key, now)
+        active_session["last_capture_at"] = now.isoformat()
+        state = dict(state)
+        state["active_session"] = active_session
+        if session_to_flush is not None:
+            flush_session(session_to_flush)
+        save_state(state)
         return
 
     if needs_line_filtering:
@@ -370,17 +400,17 @@ def main() -> None:
     else:
         ocr_text = run_ocr(bmp_bytes).strip().replace("\r\n", "\n")
 
-    if ocr_text == state.get("last_sent_text"):
-        state["last_hash"] = current_hash
-        save_state(state)
-        return
+    active_session, session_to_flush = resolve_active_session(state, pagename, window_title, session_key, now)
+    if ocr_text != state.get("last_processed_text"):
+        active_session["lines"] = merge_session_lines(active_session["lines"], ocr_text)
+    active_session["last_capture_at"] = now.isoformat()
 
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    entry_name = f"screenshot_{pagename}_{timestamp}"
-    send_to_digital_me(window_title, entry_name, ocr_text)
-
+    state = dict(state)
+    state["active_session"] = active_session
     state["last_hash"] = current_hash
-    state["last_sent_text"] = ocr_text
+    state["last_processed_text"] = ocr_text
+    if session_to_flush is not None:
+        flush_session(session_to_flush)
     save_state(state)
 
 

@@ -326,7 +326,7 @@ def test_landmark_too_wide_zero_doc_width():
 def test_state_roundtrip():
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         path = Path(f.name)
-    state = {"last_hash": "abc123", "last_sent_text": "some ocr text"}
+    state = {"last_hash": "abc123", "last_processed_text": "some ocr text"}
     path.write_text(json.dumps(state), encoding="utf-8")
     loaded = json.loads(path.read_text(encoding="utf-8"))
     assert loaded == state
@@ -336,10 +336,10 @@ def test_load_state_missing_file():
     path = Path(tempfile.gettempdir()) / "nonexistent_test_screenshot_state.json"
     path.unlink(missing_ok=True)  # clean up any prior run
     assert not path.exists()
-    state = {"last_hash": None, "last_sent_text": None}
+    state = {"last_hash": None, "last_processed_text": None}
     if path.exists():
         state = json.loads(path.read_text(encoding="utf-8"))
-    assert state == {"last_hash": None, "last_sent_text": None}
+    assert state == {"last_hash": None, "last_processed_text": None}
 
 def derive_session_key(pagename: str, url: str | None) -> str:
     return url if url else pagename
