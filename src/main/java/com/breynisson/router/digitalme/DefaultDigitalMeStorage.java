@@ -52,24 +52,19 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
             String content = addContentRequest.getContent();
             if (addContentRequest.getSource().startsWith("http")) {
                 if (ScreenshotCoverage.isCovered(addContentRequest.getSource())) {
-                    log.info("Discarding extension content already covered by screenshot capture: {}", addContentRequest.getSource());
-                    contentResponse.setSuccess(true);
-                    return contentResponse;
+                    return discard(contentResponse, "Discarding extension content already covered by screenshot capture", addContentRequest.getSource());
                 }
-                content = decodeIfJsonEncoded(content);
                 Optional<PageHandler> handler = PageHandlers.find(addContentRequest.getSource());
                 if (handler.isPresent()) {
-                    String extracted = handler.get().extract(Jsoup.parse(content));
+                    String extracted = handler.get().extract(Jsoup.parse(decodeIfJsonEncoded(content)));
                     if (extracted == null) {
-                        log.info("Discarding content with no extractable body: {}", addContentRequest.getSource());
-                        contentResponse.setSuccess(true);
-                        return contentResponse;
+                        return discard(contentResponse, "Discarding content with no extractable body", addContentRequest.getSource());
                     }
                     content = normalize(extracted);
                 } else if (addContentRequest.getSource().startsWith("https://www.youtube.com")) {
                     content = new YouTubeCaptionExtractor().extractFromYouTubeUrl(addContentRequest.getSource());
                 } else {
-                    content = normalize(Jsoup.parse(content).text());
+                    content = normalize(Jsoup.parse(decodeIfJsonEncoded(content)).text());
                 }
                 addContentRequest.setContent(content);
             }
@@ -85,6 +80,12 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
         } finally {
             lock.unlock();
         }
+        return contentResponse;
+    }
+
+    private static AddContentResponse discard(AddContentResponse contentResponse, String reason, String source) {
+        log.info("{}: {}", reason, source);
+        contentResponse.setSuccess(true);
         return contentResponse;
     }
 
