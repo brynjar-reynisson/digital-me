@@ -1,4 +1,5 @@
 import asyncio
+import ctypes
 import datetime
 import hashlib
 import io
@@ -6,10 +7,10 @@ import json
 import re
 from pathlib import Path
 
-import mss
 import requests
 import uiautomation as auto
 import win32gui
+import win32ui
 from PIL import Image
 from winsdk.windows.graphics.imaging import (
     BitmapAlphaMode,
@@ -30,6 +31,7 @@ SUBPAGE_GATED_SITES = {"quora", "linkedin"}
 CROP_CONTENT_SITES = {"quora", "linkedin", "facebook"}
 MIN_CROP_WIDTH = 100
 MIN_CROP_HEIGHT = 100
+PW_RENDERFULLCONTENT = 0x00000002  # required to capture GPU-composited windows (e.g. Chromium)
 UIA_LANDMARK_TYPE_PROPERTY_ID = 30157  # UIA_LandmarkTypePropertyId
 UIA_MAIN_LANDMARK_TYPE_ID = 80002      # UIA_MainLandmarkTypeId
 MAX_LANDMARK_SEARCH_NODES = 500
@@ -65,16 +67,37 @@ def get_address_bar_url(hwnd: int) -> str | None:
 
 
 def take_screenshot_bmp(hwnd: int, crop_box: tuple[int, int, int, int] | None = None) -> bytes:
+    # PrintWindow renders directly from the window's own surface rather than copying
+    # on-screen pixels, so it's unaffected by other windows overlapping it on the desktop
+    # (unlike a screen-region grab, which captures whatever is visually on top).
     left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-    region = {"left": left, "top": top, "width": right - left, "height": bottom - top}
-    with mss.mss() as sct:
-        img = sct.grab(region)
-        pil = Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
-        if crop_box is not None:
-            pil = pil.crop(crop_box)
-        buf = io.BytesIO()
-        pil.save(buf, format="BMP")
-        return buf.getvalue()
+    width, height = right - left, bottom - top
+
+    hwnd_dc = win32gui.GetWindowDC(hwnd)
+    mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+    save_dc = mfc_dc.CreateCompatibleDC()
+    save_bitmap = win32ui.CreateBitmap()
+    save_bitmap.CreateCompatibleBitmap(mfc_dc, width, height)
+    save_dc.SelectObject(save_bitmap)
+
+    ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), PW_RENDERFULLCONTENT)
+
+    bmpinfo = save_bitmap.GetInfo()
+    bmpstr = save_bitmap.GetBitmapBits(True)
+    pil = Image.frombuffer(
+        "RGB", (bmpinfo["bmWidth"], bmpinfo["bmHeight"]), bmpstr, "raw", "BGRX", 0, 1
+    )
+
+    win32gui.DeleteObject(save_bitmap.GetHandle())
+    save_dc.DeleteDC()
+    mfc_dc.DeleteDC()
+    win32gui.ReleaseDC(hwnd, hwnd_dc)
+
+    if crop_box is not None:
+        pil = pil.crop(crop_box)
+    buf = io.BytesIO()
+    pil.save(buf, format="BMP")
+    return buf.getvalue()
 
 
 def hash_bytes(data: bytes) -> str:

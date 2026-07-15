@@ -1,5 +1,4 @@
 pywin32
-mss
 winsdk
 Pillow
 requests
