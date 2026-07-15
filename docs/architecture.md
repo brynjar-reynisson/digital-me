@@ -11,7 +11,7 @@
 | `GET` | `/localFile?filePath=...` | Reads a local file and returns HTML-escaped content |
 | `POST` | `/addContent` | Indexes content; body: `{ source, name, content }` |
 
-`/addContent` uses a `ReentrantLock` for thread safety. If `source` starts with `http`, content is stripped to plain text via Jsoup before indexing — unless `ScreenshotCoverage.isCovered()` determines the URL is a LinkedIn/Facebook/Quora page already captured more completely by the screenshot OCR pipeline, in which case the submission is silently discarded (still returns success, nothing is written or indexed).
+`/addContent` uses a `ReentrantLock` for thread safety. If `source` starts with `http`, content is stripped to plain text via Jsoup before indexing — unless `ScreenshotCoverage.isCovered()` determines the URL is a LinkedIn/Facebook/Quora page already captured more completely by the screenshot OCR pipeline, in which case the submission is silently discarded (still returns success, nothing is written or indexed). If a `PageHandler` in the `PageHandlers` registry matches the URL (e.g. `VisirPageHandler` for visir.is), its `extract()` result is used instead of the generic Jsoup strip; if that handler returns no extractable content, the submission is silently discarded the same way.
 
 ---
 
@@ -116,6 +116,13 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - Located in `extract/` package
 - `extractFromYouTubeUrl(url)`: parses `v=` query param, calls `extract(videoId)`
 - `extract(videoId)`: uses `youtube-transcript-api` library; returns timed transcript lines as `[start_sec] text\n`
+
+### `PageHandler` / `PageHandlers` / `VisirPageHandler`
+- Located in `extract/` package, alongside `YouTubeCaptionExtractor`
+- `PageHandler` interface: `matches(url)` decides if a handler applies; `extract(Document)` returns the clean extracted text, or `null` to signal the submission has nothing worth indexing (discarded the same way as a `ScreenshotCoverage` match)
+- `PageHandlers.find(url)` — static registry; returns the first matching handler, or empty if none apply (falls through to the generic Jsoup strip / YouTube extraction)
+- `VisirPageHandler` — matches any `visir.is` URL; extracts the `h1` headline plus `div[itemprop=articleBody]` text, skipping all nav/related-article/footer markup. Returns `null` when no `articleBody` element is present, which covers the front page and other non-article pages (section fronts, live-blog hubs) without a separate root-URL check
+- To add a new site: implement `PageHandler` and add it to `PageHandlers`'s `HANDLERS` list — no other code changes needed
 
 ---
 
