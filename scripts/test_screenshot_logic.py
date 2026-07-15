@@ -349,6 +349,31 @@ def test_derive_session_key_uses_url_when_present():
 def test_derive_session_key_falls_back_to_pagename_when_no_url():
     assert derive_session_key("linkedin", None) == "linkedin"
 
+def merge_session_lines(existing_lines: list, new_text: str) -> list:
+    merged = list(existing_lines)
+    seen = set(existing_lines)
+    for line in new_text.split("\n"):
+        if line not in seen:
+            merged.append(line)
+            seen.add(line)
+    return merged
+
+def test_merge_session_lines_appends_new_lines():
+    result = merge_session_lines(["a", "b"], "b\nc")
+    assert result == ["a", "b", "c"]
+
+def test_merge_session_lines_empty_existing():
+    result = merge_session_lines([], "x\ny")
+    assert result == ["x", "y"]
+
+def test_merge_session_lines_all_duplicates_no_change():
+    result = merge_session_lines(["a", "b"], "a\nb")
+    assert result == ["a", "b"]
+
+def test_merge_session_lines_preserves_existing_order():
+    result = merge_session_lines(["z", "a"], "a\nnew")
+    assert result == ["z", "a", "new"]
+
 if __name__ == "__main__":
     test_detect_quora()
     test_detect_linkedin()
@@ -400,4 +425,8 @@ if __name__ == "__main__":
     test_load_state_missing_file()
     test_derive_session_key_uses_url_when_present()
     test_derive_session_key_falls_back_to_pagename_when_no_url()
+    test_merge_session_lines_appends_new_lines()
+    test_merge_session_lines_empty_existing()
+    test_merge_session_lines_all_duplicates_no_change()
+    test_merge_session_lines_preserves_existing_order()
     print("All tests passed.")
