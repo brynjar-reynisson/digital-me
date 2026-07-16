@@ -34,4 +34,10 @@ class PageHandlersTest {
         assertThat(PageHandlers.find("https://edition.cnn.com/2026/07/15/science/some-article"))
                 .containsInstanceOf(CNNPageHandler.class);
     }
+
+    @Test
+    void findsRedditHandlerForRedditUrl() {
+        assertThat(PageHandlers.find("https://www.reddit.com/r/OpenAI/comments/1uxfs3r/system_architects_are_about_to_become_one_of_the/"))
+                .containsInstanceOf(RedditPageHandler.class);
+    }
 }
