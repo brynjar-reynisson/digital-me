@@ -82,10 +82,15 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - `deleteByModelNot(currentModel)` — deletes rows whose `MODEL` doesn't match the currently configured embedding model
 - `findFilePathsBySourceUrl(sourceUrl)` / `deleteBySourceUrl(sourceUrl)` — used by `ResourceReceiver.deleteExistingFor()` (see below) to find and remove all chunk rows for a given source in one indexed lookup, rather than walking `mcp-resources/` on every submission
 
+### `SummaryCacheDao`
+- `find(sourceUrl)` — returns the cached summary for a source, or `null` if not cached
+- `upsert(sourceUrl, summary)` — INSERT OR REPLACE into `SUMMARY_CACHE`, keyed by `SOURCE_URL`
+- `deleteBySourceUrl(sourceUrl)` — called by `ResourceReceiver.deleteExistingFor()` and `ClaudeSessionIndexer`'s stale-file cleanup whenever a source's content is replaced, so a re-summarized file never serves a stale cached summary
+
 ### `SemanticSearch`
 - Spring `@Component` combining `EmbeddingIndex` + `SummarizeClient`
 - `search(query)`: calls `EmbeddingIndex.findSimilar(query, FINAL_RESULT_LIMIT=50)`, filters via `ExclusionRules`, returns `SearchResult`s with the snippet built from the winning chunk's text. `name` is the internal mcp-resources filename (required by the MCP fetch tool, see `docs/mcp.md`); `displayName` is the original human-friendly name, looked up in one batch via `LuceneIndex.findNamesBySources()` — Lucene already stores it correctly per source. Absent (falls back to `name`) for sources with no Lucene entry, e.g. Claude session transcripts
-- `summarize(text)`: delegates to `SummarizeClient`; returns null when the backend is unavailable
+- `summarize(text, source)`: checks `SummaryCacheDao` for a cached summary for `source` first; on a miss, delegates to `SummarizeClient` and caches a non-null/non-empty result. Returns null when the backend is unavailable. `source` may be null, in which case the cache is never consulted or written (always calls `SummarizeClient`)
 - `snippet(raw)` (static): strips first line (source URL), normalises whitespace, caps at 2000 chars; appends `<truncated, use fetch tool>` if truncated — used by the keyword-search fallback, which still reads whole files
 - `chunkSnippet(chunkText)` (static): same normalisation/truncation as `snippet()` but without stripping a header line, since chunk text has no source-URL header — used by semantic search results
 
@@ -146,6 +151,7 @@ APPLICATION_METADATA (KEY PK, VALUE)   -- stores database.version
 TEXT_ENTRY (UUID PK, TIME, NAME)        -- indexed content entries
 TEXT_ENTRY_METADATA (TEXT_ENTRY_UUID, KEY, VALUE, PK composite)
 MCP_EMBEDDING (FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING BLOB, MODEL, INDEXED_AT, PK(FILE_PATH, CHUNK_INDEX))  -- chunked vector embeddings
+SUMMARY_CACHE (SOURCE_URL PK, SUMMARY, CREATED_AT)  -- cached on-demand summaries, discarded when a source's content is replaced
 ```
 
 `TIME` and `INDEXED_AT` are stored as ISO-8601 instant strings (e.g. `2024-01-15T10:30:00Z`).
