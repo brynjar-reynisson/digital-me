@@ -14,19 +14,28 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [topSummary, setTopSummary] = useState<string | null | undefined>(undefined)
+  const [summaries, setSummaries] = useState<Record<string, string | null>>({})
   const [searchId, setSearchId] = useState(0)
-  const [semanticError, setSemanticError] = useState<string | null>(null)
+
+  function fetchSummary(source: string, snippet: string) {
+    fetch('/summarize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: snippet }),
+    })
+      .then(r => r.json() as Promise<SummarizeResponse>)
+      .then(d => setSummaries(s => ({ ...s, [source]: d.summary || '' })))
+      .catch(() => setSummaries(s => ({ ...s, [source]: '' })))
+  }
 
   async function doSearch() {
     const trimmed = keywords.trim()
     if (!trimmed) return
     setLoading(true)
     setError(null)
-    setSemanticError(null)
-    setTopSummary(undefined)
+    setSummaries({})
     setSearchId(id => id + 1)
-    
+
     const encoded = encodeURIComponent(trimmed)
 
     // Run searches in parallel but handle them independently
@@ -36,22 +45,19 @@ function App() {
         const data = await res.json() as SearchResponse
         const results = data.results || []
         setSemanticResults(results)
-        
-        if (results.length > 0 && results[0].snippet) {
-          setTopSummary(null)
-          fetch('/summarize', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: results[0].snippet }),
-          })
-            .then(r => r.json() as Promise<SummarizeResponse>)
-            .then(d => setTopSummary(d.summary || ''))
-            .catch(() => setTopSummary(''))
+
+        const topResults = results.slice(0, SEMANTIC_PAGE_SIZE)
+        const loadingEntries: Record<string, null> = {}
+        for (const item of topResults) {
+          if (item.snippet) {
+            loadingEntries[item.source] = null
+            fetchSummary(item.source, item.snippet)
+          }
         }
+        setSummaries(s => ({ ...s, ...loadingEntries }))
       })
       .catch(e => {
         console.error('Semantic search failed', e)
-        setSemanticError(e.message)
         setSemanticResults([])
       })
 
@@ -80,11 +86,11 @@ function App() {
   return (
     <div className={searched ? 'app' : 'app app--centered'}>
       <h1 className="app-title">Digital Me</h1>
-      <SearchBar 
-        keywords={keywords} 
-        setKeywords={setKeywords} 
-        onSearch={doSearch} 
-        loading={loading} 
+      <SearchBar
+        keywords={keywords}
+        setKeywords={setKeywords}
+        onSearch={doSearch}
+        loading={loading}
       />
 
       {error && <p className="error">Error: {error}</p>}
@@ -95,17 +101,17 @@ function App() {
             <p className="no-results">No results for <strong>{keywords}</strong>.</p>
           ) : (
             <>
-              <ResultSection 
+              <ResultSection
                 key={`semantic-${searchId}`}
-                title="Semantic Search Results" 
-                results={semanticResults} 
-                topSummary={topSummary} 
-                pageSize={SEMANTIC_PAGE_SIZE} 
+                title="Semantic Search Results"
+                results={semanticResults}
+                summaries={summaries}
+                pageSize={SEMANTIC_PAGE_SIZE}
               />
-              <ResultSection 
+              <ResultSection
                 key={`keyword-${searchId}`}
-                title="Keyword Search Results" 
-                results={keywordResults} 
+                title="Keyword Search Results"
+                results={keywordResults}
                 pageSize={PAGE_SIZE}
               />
             </>

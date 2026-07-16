@@ -5,11 +5,11 @@ import { ResultItem } from './ResultItem'
 interface ResultSectionProps {
   title: string
   results: SearchResult[]
-  topSummary?: string | null | undefined
+  summaries?: Record<string, string | null>
   pageSize: number
 }
 
-export function ResultSection({ title, results, topSummary, pageSize }: ResultSectionProps) {
+export function ResultSection({ title, results, summaries, pageSize }: ResultSectionProps) {
   const [page, setPage] = useState(0)
 
   const totalPages = Math.ceil(results.length / pageSize)
@@ -25,17 +25,13 @@ export function ResultSection({ title, results, topSummary, pageSize }: ResultSe
         {totalPages > 1 && ` — page ${page + 1} of ${totalPages}`}
       </p>
       <ul>
-        {pageResults.map((item, i) => {
-          const isTop = i === 0 && page === 0 && topSummary !== undefined
-          return (
-            <ResultItem 
-              key={item.source} 
-              item={item} 
-              isTop={isTop} 
-              topSummary={topSummary} 
-            />
-          )
-        })}
+        {pageResults.map((item) => (
+          <ResultItem
+            key={item.source}
+            item={item}
+            summaries={summaries}
+          />
+        ))}
       </ul>
       {totalPages > 1 && (
         <div className="pagination">
