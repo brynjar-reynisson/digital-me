@@ -46,7 +46,7 @@ Two changes to the existing method:
 
 - Obsidian-flavored syntax (`[[wikilinks]]`, `![[embeds]]`) — renders as literal plain text, not specially parsed.
 - Resolving relative image paths (`![alt](photo.png)`) to a servable URL — the `<img>` tag is emitted as-is and will show broken in the browser unless the path is already an absolute `file://` or `http(s://)` URL. No new file-serving endpoint is added.
-- Any change to how `.md` files are indexed, searched, or watched by `FileChangeWatcher` (which only recognizes `.txt` today) — this is purely a display-time change to the `/localFile` endpoint.
+- Any change to how `.md` files are indexed, searched, or watched by `FileChangeWatcher` (which already recognizes `.txt`, `.md`, and `.pdf` today) — this is purely a display-time change to the `/localFile` endpoint.
 
 ## Testing
 
