@@ -1,6 +1,7 @@
 package com.breynisson.router;
 
 import com.breynisson.router.jdbc.McpEmbeddingDao;
+import com.breynisson.router.jdbc.SummaryCacheDao;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.jdbc.model.TextEntry;
 import com.breynisson.router.mcp.EmbeddingIndex;
@@ -148,7 +149,8 @@ public class ClaudeSessionIndexer {
         return new ParsedSession(result.toString().strip(), startTime);
     }
 
-    private void deleteOldResourceFiles(String sourceUrl) {
+    void deleteOldResourceFiles(String sourceUrl) {
+        SummaryCacheDao.deleteBySourceUrl(sourceUrl);
         if (!Files.isDirectory(mcpResourcesDir)) return;
         try (Stream<Path> walk = Files.walk(mcpResourcesDir)) {
             walk.filter(Files::isRegularFile)
