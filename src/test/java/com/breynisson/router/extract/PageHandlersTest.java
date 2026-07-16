@@ -16,4 +16,10 @@ class PageHandlersTest {
     void returnsEmptyForUnrelatedUrl() {
         assertThat(PageHandlers.find("https://www.example.com/page")).isEmpty();
     }
+
+    @Test
+    void findsDvHandlerForDvUrl() {
+        assertThat(PageHandlers.find("https://www.dv.is/433/2026/07/15/some-article"))
+                .containsInstanceOf(DvPageHandler.class);
+    }
 }
