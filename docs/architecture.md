@@ -160,7 +160,7 @@ MCP_EMBEDDING (FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING BLOB, M
   - **Semantic Search Results**: calls `/semanticSearch`; 5 results per page (`SEMANTIC_PAGE_SIZE = 5`)
   - **Keyword Search Results**: calls `/search`; 10 results per page (`PAGE_SIZE = 10`)
 - Both searches run in parallel via `Promise.all`
-- **On-demand summarization**: after semantic search, the top result's snippet is POSTed to `/summarize`; the summary is displayed below that result while loading ("Summarizing…")
+- **On-demand summarization**: after semantic search, each of the top 5 results' snippets is POSTed to `/summarize` concurrently; each summary is displayed below its own result while loading ("Summarizing…"), independently of the others' completion order
 - Local file results: linked to `/localFile?filePath=<encoded-path>`
 - Web results: linked directly to the URL
 - Labels truncated to 90 characters in the result list
