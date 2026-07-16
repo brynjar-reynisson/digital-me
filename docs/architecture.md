@@ -33,7 +33,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 ## Key subsystems
 
 ### `FileChangeWatcher`
-- Only indexes `.txt` files (other extensions are ignored)
+- Indexes `.txt`, `.md`, and `.pdf` files (other extensions are ignored). PDF content is extracted via PDFBox's `PDFTextStripper`; `.txt` and `.md` are read as plain text
 - Path with `/*` suffix triggers recursive subdirectory scanning (one level deep, then recurses)
 - Compares file `lastModified` vs. DB `TIME` to skip unchanged files
 - On new/changed file: calls `LuceneIndex.createOrUpdateIndex()` + `TextEntryDao.insert/update()`
