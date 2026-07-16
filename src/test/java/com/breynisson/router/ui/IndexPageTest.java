@@ -5,11 +5,17 @@ import com.breynisson.router.digitalme.AddContentRequests;
 import com.breynisson.router.digitalme.AddContentResponse;
 import com.breynisson.router.digitalme.SearchResponse;
 import com.breynisson.router.digitalme.TestDigitalMeStorage;
+import com.breynisson.router.jdbc.DatabaseAdapter;
+import com.breynisson.router.jdbc.McpEmbeddingDao;
+import com.breynisson.router.jdbc.model.McpEmbedding;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -22,6 +28,26 @@ class IndexPageTest {
 
     @TempDir
     Path tempDir;
+
+    @TempDir
+    static Path dbDir;
+
+    @BeforeAll
+    static void setUpDatabase() {
+        DatabaseAdapter.setDefaultDatabasePath(dbDir.resolve("test.db").toString());
+        DatabaseAdapter.init();
+    }
+
+    @AfterAll
+    static void tearDownDatabase() {
+        DatabaseAdapter.setDefaultDatabasePath(null);
+    }
+
+    private static byte[] embeddingBytes() {
+        ByteBuffer buf = ByteBuffer.allocate(Float.BYTES);
+        buf.putFloat(1.0f);
+        return buf.array();
+    }
 
     @BeforeEach
     void setUp() {
@@ -73,6 +99,19 @@ class IndexPageTest {
 
         assertTrue(html.contains("# Not a heading"));
         assertFalse(html.contains("<h1>"));
+    }
+
+    @Test
+    void localFileResolvesNonPathSourceUrlViaEmbeddingIndex() throws IOException {
+        String sourceUrl = "claude://some-project/some-uuid";
+        Path resourceFile = tempDir.resolve("16-10-00-00-claudecode-some-project.txt");
+        Files.writeString(resourceFile, sourceUrl + "\nHello from claude session");
+        McpEmbeddingDao.upsert(new McpEmbedding(resourceFile.toAbsolutePath().toString(), 0, sourceUrl,
+                "Hello from claude session", embeddingBytes(), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+
+        String html = indexPage.localFile(sourceUrl);
+
+        assertTrue(html.contains("Hello from claude session"));
     }
 
     private static AddContentRequest request(String source, String name, String content) {
