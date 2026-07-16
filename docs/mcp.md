@@ -24,7 +24,7 @@ Exposed at `POST /mcp` (Streamable HTTP transport, `HttpServletStreamableServerT
 
 - `McpServerConfig` — `@Configuration` that registers transport, servlet, and `McpSyncServer` beans; builds search, fetch, and resource handlers
 - `SemanticSearch` — Spring component wrapping `EmbeddingIndex` + `SummarizeClient`; owns snippet extraction and exclusion filtering (see `docs/architecture.md`)
-- `ResourceReceiver` — writes MCP-submitted content to `mcp-resources/<year-month>/<timestamp-name>.txt`; first line is source URL; triggers `EmbeddingIndex.indexFile()` after writing
+- `ResourceReceiver` — writes MCP-submitted content to `mcp-resources/<year-month>/<timestamp-name>.txt`; first line is source URL; triggers `EmbeddingIndex.indexFile()` after writing. `deleteExistingFor(sourceUrl)`, called by `DefaultDigitalMeStorage.addContent()` before writing, removes any prior resource file(s) and embedding rows for that exact source so re-indexing replaces rather than accumulates
 - `EmbeddingIndex` — semantic vector search (see `docs/architecture.md`)
 
 ## Ollama setup
