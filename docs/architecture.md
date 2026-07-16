@@ -117,12 +117,13 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - `extractFromYouTubeUrl(url)`: parses `v=` query param, calls `extract(videoId)`
 - `extract(videoId)`: uses `youtube-transcript-api` library; returns timed transcript lines as `[start_sec] text\n`
 
-### `PageHandler` / `PageHandlers` / `VisirPageHandler` / `DVPageHandler`
+### `PageHandler` / `PageHandlers` / `VisirPageHandler` / `DVPageHandler` / `FotboltiPageHandler`
 - Located in `extract/` package, alongside `YouTubeCaptionExtractor`
 - `PageHandler` interface: `matches(url)` decides if a handler applies; `extract(Document)` returns the clean extracted text, or `null` to signal the submission has nothing worth indexing (discarded the same way as a `ScreenshotCoverage` match)
 - `PageHandlers.find(url)` — static registry; returns the first matching handler, or empty if none apply (falls through to the generic Jsoup strip / YouTube extraction)
 - `VisirPageHandler` — matches any `visir.is` URL; extracts the `h1` headline plus `div[itemprop=articleBody]` text, skipping all nav/related-article/footer markup. Returns `null` when no `articleBody` element is present, which covers the front page and other non-article pages (section fronts, live-blog hubs) without a separate root-URL check
 - `DVPageHandler` — matches any `dv.is` URL; extracts the `h1` headline plus the direct-child `<p>` paragraphs of `div.article-body .field--name-body` (dv.is is Drupal-based, and `field--name-body` alone is not article-specific — it's reused for footer/sidebar widgets, so selection is scoped under the article-specific `div.article-body` wrapper, and direct-child-only paragraph selection excludes embedded image blocks). Returns `null` when no `article-body` element is present, covering the front page and other non-article pages
+- `FotboltiPageHandler` — matches any `fotbolti.net` URL; extracts the `h1` headline plus all `div.font-body.text-base.leading-8` elements' joined text (fotbolti.net's CMS splits an article's body into two such divs around an inline "related article" card — this single selector matches both halves and nothing else on the page). Returns `null` when the selection is empty, which covers the front page and other non-article pages; unlike the other two handlers, there's no separate existence check — the extraction selector and the discard check are the same query
 - To add a new site: implement `PageHandler` and add it to `PageHandlers`'s `HANDLERS` list — no other code changes needed
 
 ---
