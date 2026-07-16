@@ -13,6 +13,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -47,6 +49,18 @@ class SemanticSearchTest {
     @AfterEach
     void tearDown() {
         LuceneIndex.deleteIndex();
+    }
+
+    private static void cleanup(String sourceUrl) {
+        DatabaseAdapter.runSql("DELETE FROM SUMMARY_CACHE WHERE SOURCE_URL='" + sourceUrl + "'");
+    }
+
+    private SemanticSearch semanticSearch(Function<String, String> summarizer, AtomicInteger callCount) {
+        EmbeddingIndex embeddingIndex = new EmbeddingIndex(text -> null, dataDir.toString());
+        return new SemanticSearch(embeddingIndex, text -> {
+            callCount.incrementAndGet();
+            return summarizer.apply(text);
+        }, dataDir.toString());
     }
 
     @Test
@@ -117,5 +131,68 @@ class SemanticSearchTest {
     void chunkSnippetDoesNotStripFirstLine() {
         String chunkText = "First sentence of the chunk. Second sentence.";
         assertEquals(chunkText, SemanticSearch.chunkSnippet(chunkText));
+    }
+
+    @Test
+    void firstCallForSourceInvokesSummarizerAndReturnsResult() {
+        AtomicInteger calls = new AtomicInteger();
+        SemanticSearch semanticSearch = semanticSearch(text -> "a summary", calls);
+
+        String result = semanticSearch.summarize("some text", "http://fresh-source.com");
+
+        assertEquals("a summary", result);
+        assertEquals(1, calls.get());
+        cleanup("http://fresh-source.com");
+    }
+
+    @Test
+    void secondCallForSameSourceReturnsCachedValueWithoutInvokingSummarizerAgain() {
+        AtomicInteger calls = new AtomicInteger();
+        SemanticSearch semanticSearch = semanticSearch(text -> "a summary", calls);
+        String source = "http://cached-source.com";
+
+        semanticSearch.summarize("some text", source);
+        String second = semanticSearch.summarize("different text", source);
+
+        assertEquals("a summary", second);
+        assertEquals(1, calls.get(), "summarizer should only be invoked once");
+        cleanup(source);
+    }
+
+    @Test
+    void nullResultIsNotCachedAndIsRetriedOnNextCall() {
+        AtomicInteger calls = new AtomicInteger();
+        SemanticSearch semanticSearch = semanticSearch(text -> null, calls);
+        String source = "http://failing-source.com";
+
+        String first = semanticSearch.summarize("some text", source);
+        String second = semanticSearch.summarize("some text", source);
+
+        assertNull(first);
+        assertNull(second);
+        assertEquals(2, calls.get(), "a failed call must be retried, not cached");
+    }
+
+    @Test
+    void emptyResultIsNotCachedAndIsRetriedOnNextCall() {
+        AtomicInteger calls = new AtomicInteger();
+        SemanticSearch semanticSearch = semanticSearch(text -> "", calls);
+        String source = "http://empty-source.com";
+
+        semanticSearch.summarize("some text", source);
+        semanticSearch.summarize("some text", source);
+
+        assertEquals(2, calls.get(), "an empty result must be retried, not cached");
+    }
+
+    @Test
+    void nullSourceNeverTouchesTheCache() {
+        AtomicInteger calls = new AtomicInteger();
+        SemanticSearch semanticSearch = semanticSearch(text -> "a summary", calls);
+
+        semanticSearch.summarize("some text", null);
+        semanticSearch.summarize("some text", null);
+
+        assertEquals(2, calls.get(), "without a source, every call must invoke the summarizer");
     }
 }

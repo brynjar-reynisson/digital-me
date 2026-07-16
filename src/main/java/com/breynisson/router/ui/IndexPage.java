@@ -69,12 +69,12 @@ public class IndexPage {
         return new SearchResponse(results);
     }
 
-    record SummarizeRequest(String text) {}
+    record SummarizeRequest(String text, String source) {}
     record SummarizeResponse(String summary) {}
 
     @PostMapping(value = "/summarize", consumes = "application/json", produces = "application/json")
     public SummarizeResponse summarize(@RequestBody SummarizeRequest request) {
-        String summary = semanticSearch.summarize(request.text());
+        String summary = semanticSearch.summarize(request.text(), request.source());
         return new SummarizeResponse(summary != null ? summary : "");
     }
 

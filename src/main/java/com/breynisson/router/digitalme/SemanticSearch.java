@@ -1,5 +1,6 @@
 package com.breynisson.router.digitalme;
 
+import com.breynisson.router.jdbc.SummaryCacheDao;
 import com.breynisson.router.lucene.LuceneIndex;
 import com.breynisson.router.mcp.EmbeddingIndex;
 import com.breynisson.router.mcp.ResourceReceiver;
@@ -50,9 +51,25 @@ public class SemanticSearch {
                 .toList();
     }
 
-    /** Summarizes the given text; returns null if Ollama is unavailable. */
-    public String summarize(String text) {
-        return summarizeClient.summarize(text);
+    /**
+     * Summarizes the given text, caching the result per source; returns null if the
+     * backend is unavailable. A null/empty result is never cached, so a failed call
+     * is retried on the next request for that source rather than permanently
+     * showing no summary. source may be null (e.g. a caller with no known file
+     * identity), in which case the cache is never consulted or written.
+     */
+    public String summarize(String text, String source) {
+        if (source != null) {
+            String cached = SummaryCacheDao.find(source);
+            if (cached != null) {
+                return cached;
+            }
+        }
+        String summary = summarizeClient.summarize(text);
+        if (source != null && summary != null && !summary.isEmpty()) {
+            SummaryCacheDao.upsert(source, summary);
+        }
+        return summary;
     }
 
     /** Extracts content after the first line (source URL), normalised and capped at SNIPPET_CHARS. */
