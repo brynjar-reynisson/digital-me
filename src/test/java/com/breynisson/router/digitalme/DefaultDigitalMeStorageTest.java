@@ -449,6 +449,64 @@ class DefaultDigitalMeStorageTest {
         cleanupDb("https://www.visir.is/g/222/another-story-with-changed-layout");
     }
 
+    @Test
+    void addContentExtractsCNNArticleBodyFromRealExtensionPayloadShape() throws com.fasterxml.jackson.core.JsonProcessingException {
+        String html = """
+                <html>
+                <body>
+                <nav>Home US World Politics Business</nav>
+                <h1 data-editable="headlineText" class="headline__text" id="maincontent">Meteorite Sheds Light on Ancient Water</h1>
+                <div class="article__content" itemprop="articleBody">
+                  <p data-component-name="paragraph">A meteorite that crashed through the roof of a home could shed light on ancient water in the solar system.</p>
+                  <div data-component-name="related-content" class="related-content">
+                    <p class="related-content__headline">Related article: Scientists found something else in an asteroid</p>
+                  </div>
+                  <p data-component-name="paragraph">Only one fragment was recovered from the meteorite.</p>
+                </div>
+                </body>
+                </html>
+                """;
+        String extensionShapedPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(html);
+        AddContentRequest req = request("https://edition.cnn.com/2026/07/15/science/meteorite-ancient-water", "Meteorite", extensionShapedPayload);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertEquals(1, storage.search("fragment").results().size());
+        assertEquals(1, storage.search("roof").results().size());
+        assertTrue(storage.search("Scientists found something else").results().isEmpty());
+        assertFalse(TextEntryDao.findByName("https://edition.cnn.com/2026/07/15/science/meteorite-ancient-water").isEmpty());
+
+        cleanupDb("https://edition.cnn.com/2026/07/15/science/meteorite-ancient-water");
+    }
+
+    @Test
+    void addContentDiscardsCNNFrontPage() throws com.fasterxml.jackson.core.JsonProcessingException {
+        cleanupDb("https://edition.cnn.com");
+        storage.addContent(request("http://unrelated-cnn-seed.com", "Unrelated", "unrelated seed content"));
+
+        String html = """
+                <html>
+                <body>
+                <nav>Home US World Politics Business</nav>
+                <div class="zone">
+                  <a href="/2026/07/15/science/some-article"><span class="headline">Meteorite Sheds Light on Ancient Water</span></a>
+                </div>
+                </body>
+                </html>
+                """;
+        String extensionShapedPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(html);
+        AddContentRequest req = request("https://edition.cnn.com", "CNN Front Page", extensionShapedPayload);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertTrue(TextEntryDao.findByName("https://edition.cnn.com").isEmpty());
+        assertTrue(storage.search("Meteorite Sheds Light").results().isEmpty());
+
+        cleanupDb("http://unrelated-cnn-seed.com");
+    }
+
     private static AddContentRequest request(String source, String name, String content) {
         return AddContentRequests.of(source, name, content);
     }
