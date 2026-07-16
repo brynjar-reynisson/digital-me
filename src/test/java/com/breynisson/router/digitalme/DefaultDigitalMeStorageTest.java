@@ -357,6 +357,7 @@ class DefaultDigitalMeStorageTest {
 
         assertTrue(response.isSuccess());
         assertEquals(1, storage.search("turnaround").results().size());
+        assertEquals(1, storage.search("criticism").results().size());
         assertTrue(storage.search("Defends").results().isEmpty());
         assertFalse(TextEntryDao.findByName("https://fotbolti.net/news/16-07-2026/argentina-dominates").isEmpty());
 
