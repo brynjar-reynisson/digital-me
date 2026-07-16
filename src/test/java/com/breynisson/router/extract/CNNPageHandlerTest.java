@@ -48,6 +48,33 @@ class CNNPageHandlerTest {
     }
 
     @Test
+    void extractsHeadlineAndBodyFromLiveBlogPage() {
+        String html = """
+                <html>
+                <body>
+                <nav>Home US World Politics Business</nav>
+                <h1 data-editable="headlineText" class="headline_live-story__text" id="maincontent">Iran War Live Updates</h1>
+                <article data-component-name="live-story-post">
+                  <h2 class="live-story-post__headline">Iran signals openness to diplomacy</h2>
+                  <p data-component-name="paragraph">Officials say Iran remains open to diplomatic talks despite recent tensions.</p>
+                </article>
+                <article data-component-name="live-story-post">
+                  <h2 class="live-story-post__headline">Trump responds to latest developments</h2>
+                  <p data-component-name="paragraph">The president addressed reporters about the ongoing situation in the region.</p>
+                </article>
+                </body>
+                </html>
+                """;
+        Document doc = Jsoup.parse(html);
+
+        String result = handler.extract(doc);
+
+        assertThat(result).contains("Iran War Live Updates");
+        assertThat(result).contains("Officials say Iran remains open to diplomatic talks despite recent tensions.");
+        assertThat(result).contains("The president addressed reporters about the ongoing situation in the region.");
+    }
+
+    @Test
     void returnsNullWhenNoArticleBodyPresent() {
         String html = """
                 <html>
@@ -70,6 +97,11 @@ class CNNPageHandlerTest {
     }
 
     @Test
+    void looksLikeArticleUrlForLiveBlog() {
+        assertThat(handler.looksLikeArticleUrl("https://edition.cnn.com/2026/07/16/world/live-news/iran-war-trump")).isTrue();
+    }
+
+    @Test
     void doesNotLookLikeArticleUrlForFrontPage() {
         assertThat(handler.looksLikeArticleUrl("https://edition.cnn.com")).isFalse();
     }
@@ -77,10 +109,5 @@ class CNNPageHandlerTest {
     @Test
     void siteNameIsCnn() {
         assertThat(handler.siteName()).isEqualTo("cnn");
-    }
-
-    @Test
-    void doesNotLookLikeArticleUrlForLiveBlog() {
-        assertThat(handler.looksLikeArticleUrl("https://edition.cnn.com/2026/07/16/world/live-news/iran-war-trump")).isFalse();
     }
 }
