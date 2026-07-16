@@ -507,6 +507,37 @@ class DefaultDigitalMeStorageTest {
         cleanupDb("http://unrelated-cnn-seed.com");
     }
 
+    @Test
+    void addContentExtractsCNNLiveBlogFromRealExtensionPayloadShape() throws com.fasterxml.jackson.core.JsonProcessingException {
+        String html = """
+                <html>
+                <body>
+                <nav>Home US World Politics Business</nav>
+                <h1 data-editable="headlineText" class="headline_live-story__text" id="maincontent">Iran War Live Updates</h1>
+                <article data-component-name="live-story-post">
+                  <h2 class="live-story-post__headline">Iran signals openness to diplomacy</h2>
+                  <p data-component-name="paragraph">Officials say Iran remains open to diplomatic talks despite recent tensions.</p>
+                </article>
+                <article data-component-name="live-story-post">
+                  <h2 class="live-story-post__headline">Trump responds to latest developments</h2>
+                  <p data-component-name="paragraph">The president addressed reporters about the ongoing situation in the region.</p>
+                </article>
+                </body>
+                </html>
+                """;
+        String extensionShapedPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(html);
+        AddContentRequest req = request("https://edition.cnn.com/2026/07/16/world/live-news/iran-war-trump", "Iran War Live Updates", extensionShapedPayload);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertEquals(1, storage.search("diplomatic").results().size());
+        assertEquals(1, storage.search("reporters").results().size());
+        assertFalse(TextEntryDao.findByName("https://edition.cnn.com/2026/07/16/world/live-news/iran-war-trump").isEmpty());
+
+        cleanupDb("https://edition.cnn.com/2026/07/16/world/live-news/iran-war-trump");
+    }
+
     private static AddContentRequest request(String source, String name, String content) {
         return AddContentRequests.of(source, name, content);
     }
