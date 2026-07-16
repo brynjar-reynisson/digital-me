@@ -78,4 +78,18 @@ class MarkdownPageRendererTest {
         assertThat(html).doesNotContain("<script>alert(1)</script>");
         assertThat(html).contains("&lt;script&gt;");
     }
+
+    @Test
+    void sanitizesJavascriptUrlInLink() {
+        String html = MarkdownPageRenderer.render("[click me](javascript:alert(1))");
+
+        assertThat(html).doesNotContain("href=\"javascript:");
+    }
+
+    @Test
+    void rendersPlainHttpsLink() {
+        String html = MarkdownPageRenderer.render("[example](https://example.com)");
+
+        assertThat(html).contains("href=\"https://example.com\"");
+    }
 }

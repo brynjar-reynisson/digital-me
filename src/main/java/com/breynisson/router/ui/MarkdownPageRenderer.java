@@ -25,6 +25,7 @@ public final class MarkdownPageRenderer {
     private static final HtmlRenderer RENDERER = HtmlRenderer.builder()
             .extensions(EXTENSIONS)
             .escapeHtml(true)
+            .sanitizeUrls(true)
             .build();
 
     private static final String STYLE = """
