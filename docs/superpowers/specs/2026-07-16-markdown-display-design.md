@@ -19,7 +19,7 @@
 Static utility, same style as `LuceneIndex`:
 
 - `isMarkdownFile(String filePath)` — `true` if the path, lower-cased, ends with `.md` or `.markdown`.
-- `render(String markdownContent)` — builds a commonmark `Parser` with the three GFM extensions above, parses `markdownContent`, renders to an HTML fragment via `HtmlRenderer` (default escaping of raw HTML/script in the source stays on — commonmark's default `HtmlRenderer` escapes inline HTML unless explicitly configured otherwise, and this is not changed), then wraps the fragment in a full, self-contained HTML page:
+- `render(String markdownContent)` — builds a commonmark `Parser` with the three GFM extensions above, parses `markdownContent`, renders to an HTML fragment via `HtmlRenderer` built with `.escapeHtml(true)`. commonmark-java's `HtmlRenderer` defaults `escapeHtml` to `false` (raw HTML/script embedded in markdown source passes through unescaped, per the CommonMark spec's own raw-HTML-passthrough feature) — since today's endpoint always escapes everything, `.escapeHtml(true)` is set explicitly to keep that safe-by-default behavior for literal HTML tags typed into `.md` source, while standard markdown formatting (headings, bold, links, tables, etc.) renders normally. The fragment is then wrapped in a full, self-contained HTML page:
   - Inline `<style>` only — no external stylesheet or CDN, matching the rest of the app's self-contained-response style.
   - Centered content column (~800px max-width), system font stack, styled `code`/`pre` blocks, table borders/padding, blockquote left-border, comfortable line-height.
   - `@media (prefers-color-scheme: dark)` block for dark backgrounds/text — no toggle, just following the OS/browser preference.
@@ -53,5 +53,5 @@ Two changes to the existing method:
 - `MarkdownPageRendererTest`:
   - `isMarkdownFile()`: `.md`, `.MD`, `.markdown` (and mixed case) return `true`; `.txt`, `.html`, no-extension, and a path that merely contains `md` mid-name return `false`.
   - `render()`: a fixture combining a heading, a list, a table, `~~strikethrough~~`, and a `- [ ]` task list item produces the corresponding HTML tags (`<h1>`/`<table>`/`<del>`/checkbox input, etc.) rather than literal markdown syntax.
-  - `render()` on source containing a raw `<script>` tag confirms it comes out HTML-escaped in the output, not as an executable tag — locking in commonmark's default safe behavior.
+  - `render()` on source containing a raw `<script>` tag confirms it comes out HTML-escaped in the output, not as an executable tag — locking in the explicit `.escapeHtml(true)` setting (commonmark-java's own default is unescaped raw-HTML passthrough).
 - `IndexPageTest`: add a case with a `.md`-suffixed temp file confirming `localFile()` returns rendered HTML (e.g. asserts a `<h1>`-wrapped heading appears) rather than the raw `#`-prefixed escaped text; existing non-markdown behavior stays covered by not modifying its current assertions.
