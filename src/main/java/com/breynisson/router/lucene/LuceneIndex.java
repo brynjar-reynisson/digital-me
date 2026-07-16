@@ -62,6 +62,34 @@ public class LuceneIndex {
         }
     }
 
+    /**
+     * Looks up the stored FIELD_NAME for each given source, in one query. Sources with no indexed
+     * document are simply absent from the returned map. Returns an empty map (rather than throwing)
+     * when the index has no documents yet, since callers may query it before anything is indexed.
+     */
+    public static Map<String, String> findNamesBySources(Collection<String> sources) {
+        if (sources.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> names = new HashMap<>();
+        try (Directory indexDir = FSDirectory.open(Paths.get(getIndexPath()));
+             IndexReader reader = DirectoryReader.open(indexDir)
+        ) {
+            IndexSearcher searcher = new IndexSearcher(reader);
+            List<BytesRef> terms = sources.stream().map(BytesRef::new).toList();
+            TopDocs topDocs = searcher.search(new TermInSetQuery(FIELD_SOURCE, terms), sources.size());
+            for (ScoreDoc scoreDoc : topDocs.scoreDocs) {
+                Document doc = searcher.doc(scoreDoc.doc);
+                names.put(doc.get(FIELD_SOURCE), doc.get(FIELD_NAME));
+            }
+        } catch (IndexNotFoundException e) {
+            return Map.of();
+        } catch (IOException e) {
+            throw new RouterException(e);
+        }
+        return names;
+    }
+
     public static List<SearchResult> find(String phrase) {
         try (Directory indexDir = FSDirectory.open(Paths.get(getIndexPath()));
              IndexReader reader = DirectoryReader.open(indexDir);

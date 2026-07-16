@@ -8,7 +8,7 @@ interface ResultItemProps {
 }
 
 export function ResultItem({ item, isTop, topSummary }: ResultItemProps) {
-  const label = item.name || item.source
+  const label = item.displayName || item.name || item.source
   const display = truncateLabel(label)
   const scorePercent = item.score ? Math.round(item.score * 100) : null
   const frequencies = item.termFrequencies 

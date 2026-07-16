@@ -1,6 +1,7 @@
 export interface SearchResult {
   source: string
   name?: string
+  displayName?: string
   snippet?: string
   score?: number
   termFrequencies?: Record<string, number>

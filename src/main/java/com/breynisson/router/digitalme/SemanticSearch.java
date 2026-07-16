@@ -1,5 +1,6 @@
 package com.breynisson.router.digitalme;
 
+import com.breynisson.router.lucene.LuceneIndex;
 import com.breynisson.router.mcp.EmbeddingIndex;
 import com.breynisson.router.mcp.ResourceReceiver;
 import com.breynisson.router.mcp.SummarizeClient;
@@ -9,6 +10,8 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Component
 public class SemanticSearch {
@@ -31,12 +34,18 @@ public class SemanticSearch {
 
     /** Returns up to FINAL_RESULT_LIMIT semantically similar results; empty list if Ollama is unavailable. */
     public List<SearchResult> search(String query) {
-        return embeddingIndex.findSimilar(query, FINAL_RESULT_LIMIT).stream()
+        List<EmbeddingIndex.ScoredResult> matches = embeddingIndex.findSimilar(query, FINAL_RESULT_LIMIT).stream()
                 .filter(r -> !ExclusionRules.isExcluded(r.sourceUrl()))
+                .toList();
+        // name must stay the internal mcp-resources filename (the MCP fetch tool looks files up by it);
+        // displayName carries the original human-friendly name, looked up once for the whole result set.
+        Map<String, String> displayNames = LuceneIndex.findNamesBySources(
+                matches.stream().map(EmbeddingIndex.ScoredResult::sourceUrl).collect(Collectors.toSet()));
+        return matches.stream()
                 .map(r -> {
                     Path p = Path.of(r.filePath());
                     return new SearchResult(r.sourceUrl(), p.getFileName().toString(),
-                            chunkSnippet(r.chunkText()), (double) r.score());
+                            chunkSnippet(r.chunkText()), (double) r.score(), null, displayNames.get(r.sourceUrl()));
                 })
                 .toList();
     }
