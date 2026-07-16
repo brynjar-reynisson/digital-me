@@ -6,7 +6,7 @@
 |---|---|---|
 | `GET` | `/` | Redirects to `/index.html` |
 | `GET` | `/search?keywords=...` | Lucene full-text search; returns `{ results: [{source, name}] }` |
-| `GET` | `/semanticSearch?keywords=...` | Semantic search via Ollama embeddings; returns `{ results: [{source, name, snippet}] }` |
+| `GET` | `/semanticSearch?keywords=...` | Semantic search via Ollama embeddings; returns `{ results: [{source, name, displayName, snippet}] }` — `name` is the internal mcp-resources filename, `displayName` (when present) is the original human-friendly name for display |
 | `POST` | `/summarize` | On-demand text summarization; body: `{ text }`; returns `{ summary }` |
 | `GET` | `/localFile?filePath=...` | Reads a local file; `.md`/`.markdown` files are rendered as formatted HTML via `MarkdownPageRenderer` (CommonMark GFM with tables/strikethrough/task-lists; raw HTML in source is escaped); all other file types return HTML-escaped plain text |
 | `POST` | `/addContent` | Indexes content; body: `{ source, name, content }` |
@@ -84,7 +84,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 
 ### `SemanticSearch`
 - Spring `@Component` combining `EmbeddingIndex` + `SummarizeClient`
-- `search(query)`: calls `EmbeddingIndex.findSimilar(query, FINAL_RESULT_LIMIT=50)`, filters via `ExclusionRules`, returns list of `{source, name, snippet}` maps with the snippet built from the winning chunk's text
+- `search(query)`: calls `EmbeddingIndex.findSimilar(query, FINAL_RESULT_LIMIT=50)`, filters via `ExclusionRules`, returns `SearchResult`s with the snippet built from the winning chunk's text. `name` is the internal mcp-resources filename (required by the MCP fetch tool, see `docs/mcp.md`); `displayName` is the original human-friendly name, looked up in one batch via `LuceneIndex.findNamesBySources()` — Lucene already stores it correctly per source. Absent (falls back to `name`) for sources with no Lucene entry, e.g. Claude session transcripts
 - `summarize(text)`: delegates to `SummarizeClient`; returns null when the backend is unavailable
 - `snippet(raw)` (static): strips first line (source URL), normalises whitespace, caps at 2000 chars; appends `<truncated, use fetch tool>` if truncated — used by the keyword-search fallback, which still reads whole files
 - `chunkSnippet(chunkText)` (static): same normalisation/truncation as `snippet()` but without stripping a header line, since chunk text has no source-URL header — used by semantic search results
