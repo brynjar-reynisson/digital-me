@@ -330,6 +330,67 @@ class DefaultDigitalMeStorageTest {
         cleanupDb("http://unrelated-dv-seed.com");
     }
 
+    @Test
+    void addContentExtractsFotboltiArticleBodyFromRealExtensionPayloadShape() throws com.fasterxml.jackson.core.JsonProcessingException {
+        String html = """
+                <html>
+                <body>
+                <nav>Home News Sports Life Opinion</nav>
+                <div class="p-(--space-4)">
+                  <h1 class="font-heading text-2xl font-bold uppercase leading-tight text-text-primary lg:text-3xl">Argentina Dominates After England Takes Lead</h1>
+                  <div class="space-y-(--space-4)">
+                    <div class="font-body text-base leading-8 text-text-primary">The manager faced heavy criticism after the team lost in the semi-final.</div>
+                    <div class="lg:hidden"></div>
+                    <a href="/news/other-article" class="flex overflow-hidden">
+                      <h3 class="mt-(--space-1) text-base leading-normal">Related: Manager Defends His Decisions</h3>
+                    </a>
+                    <div class="article-html font-body text-base leading-8 text-text-primary">Statistics show a complete turnaround after the opening goal was scored.</div>
+                  </div>
+                </div>
+                </body>
+                </html>
+                """;
+        String extensionShapedPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(html);
+        AddContentRequest req = request("https://fotbolti.net/news/16-07-2026/argentina-dominates", "Argentina Dominates", extensionShapedPayload);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertEquals(1, storage.search("turnaround").results().size());
+        assertTrue(storage.search("Defends").results().isEmpty());
+        assertFalse(TextEntryDao.findByName("https://fotbolti.net/news/16-07-2026/argentina-dominates").isEmpty());
+
+        cleanupDb("https://fotbolti.net/news/16-07-2026/argentina-dominates");
+    }
+
+    @Test
+    void addContentDiscardsFotboltiFrontPage() throws com.fasterxml.jackson.core.JsonProcessingException {
+        cleanupDb("https://fotbolti.net");
+        storage.addContent(request("http://unrelated-fotbolti-seed.com", "Unrelated", "unrelated seed content"));
+
+        String html = """
+                <html>
+                <body>
+                <nav>Home News Sports Life Opinion</nav>
+                <div class="space-y-(--space-2)">
+                  <a href="/news/1"><span class="line-clamp-2">Argentina Dominates After England Takes Lead</span></a>
+                  <a href="/news/2"><span class="line-clamp-2">Another Story Headline</span></a>
+                </div>
+                </body>
+                </html>
+                """;
+        String extensionShapedPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(html);
+        AddContentRequest req = request("https://fotbolti.net", "Fotbolti Front Page", extensionShapedPayload);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertTrue(TextEntryDao.findByName("https://fotbolti.net").isEmpty());
+        assertTrue(storage.search("Dominates").results().isEmpty());
+
+        cleanupDb("http://unrelated-fotbolti-seed.com");
+    }
+
     private static AddContentRequest request(String source, String name, String content) {
         return AddContentRequests.of(source, name, content);
     }
