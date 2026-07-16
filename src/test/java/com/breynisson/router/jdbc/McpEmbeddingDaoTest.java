@@ -116,6 +116,46 @@ class McpEmbeddingDaoTest {
     }
 
     @Test
+    void findFilePathsBySourceUrlReturnsDistinctPathsAcrossFilesAndChunks() {
+        String pathA = "/tmp/dao-test-8-a.txt";
+        String pathB = "/tmp/dao-test-8-b.txt";
+        String otherPath = "/tmp/dao-test-8-other.txt";
+        McpEmbeddingDao.upsert(embedding(pathA, 0, "http://shared-source.com", "chunk 0", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(pathA, 1, "http://shared-source.com", "chunk 1", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(pathB, 0, "http://shared-source.com", "chunk 0", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(otherPath, 0, "http://other-source.com", "chunk 0", "nomic-embed-text"));
+
+        Set<String> paths = McpEmbeddingDao.findFilePathsBySourceUrl("http://shared-source.com");
+
+        assertEquals(Set.of(pathA, pathB), paths);
+        cleanup(pathA);
+        cleanup(pathB);
+        cleanup(otherPath);
+    }
+
+    @Test
+    void findFilePathsBySourceUrlReturnsEmptyForUnknownSource() {
+        assertTrue(McpEmbeddingDao.findFilePathsBySourceUrl("http://never-indexed.com").isEmpty());
+    }
+
+    @Test
+    void deleteBySourceUrlRemovesAllFilesAndChunksForThatSource() {
+        String pathA = "/tmp/dao-test-9-a.txt";
+        String pathB = "/tmp/dao-test-9-b.txt";
+        String otherPath = "/tmp/dao-test-9-other.txt";
+        McpEmbeddingDao.upsert(embedding(pathA, 0, "http://shared-source-2.com", "chunk 0", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(pathB, 0, "http://shared-source-2.com", "chunk 0", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(otherPath, 0, "http://other-source-2.com", "chunk 0", "nomic-embed-text"));
+
+        McpEmbeddingDao.deleteBySourceUrl("http://shared-source-2.com");
+
+        assertTrue(McpEmbeddingDao.findFilePathsBySourceUrl("http://shared-source-2.com").isEmpty());
+        assertFalse(McpEmbeddingDao.findAllFilePaths().stream().anyMatch(p -> p.equals(pathA) || p.equals(pathB)));
+        assertTrue(McpEmbeddingDao.findAllFilePaths().contains(otherPath));
+        cleanup(otherPath);
+    }
+
+    @Test
     void deleteByModelNotRemovesOnlyMismatchedRows() {
         String keepPath = "/tmp/dao-test-7-keep.txt";
         String dropPath = "/tmp/dao-test-7-drop.txt";

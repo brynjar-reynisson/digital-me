@@ -1,13 +1,21 @@
 package com.breynisson.router.digitalme;
 
 import com.breynisson.router.jdbc.DatabaseAdapter;
+import com.breynisson.router.jdbc.McpEmbeddingDao;
 import com.breynisson.router.jdbc.TextEntryDao;
+import com.breynisson.router.jdbc.model.McpEmbedding;
 import com.breynisson.router.lucene.LuceneIndex;
 import com.breynisson.router.mcp.EmbeddingIndex;
+import com.breynisson.router.mcp.ResourceReceiver;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -49,6 +57,29 @@ class DefaultDigitalMeStorageTest {
 
     private void cleanupDb(String source) {
         TextEntryDao.findByName(source).forEach(e -> TextEntryDao.delete(e.uuid));
+    }
+
+    private List<Path> findMcpResourceFilesFor(String sourceUrl) throws IOException {
+        Path mcpResourcesDir = dataDir.resolve("mcp-resources");
+        if (!Files.isDirectory(mcpResourcesDir)) return List.of();
+        try (var walk = Files.walk(mcpResourcesDir)) {
+            return walk.filter(Files::isRegularFile)
+                    .filter(f -> {
+                        try {
+                            String content = Files.readString(f);
+                            return sourceUrl.equals(ResourceReceiver.firstLine(content));
+                        } catch (IOException e) {
+                            return false;
+                        }
+                    })
+                    .toList();
+        }
+    }
+
+    private static byte[] fakeEmbeddingBytes() {
+        ByteBuffer buf = ByteBuffer.allocate(Float.BYTES);
+        buf.putFloat(1.0f);
+        return buf.array();
     }
 
     @Test
@@ -140,6 +171,59 @@ class DefaultDigitalMeStorageTest {
         assertTrue(response.isSuccess());
         assertTrue(storage.search("facebook").results().isEmpty());
         assertTrue(TextEntryDao.findByName("https://www.facebook.com/somepost").isEmpty());
+
+        cleanupDb("http://unrelated.com");
+    }
+
+    @Test
+    void addContentReplacesPriorResourceFileOnResubmission() throws IOException {
+        String source = "http://resubmitted.com";
+        cleanupDb(source);
+
+        storage.addContent(request(source, "Page", "first version content"));
+        List<Path> filesAfterFirst = findMcpResourceFilesFor(source);
+        assertEquals(1, filesAfterFirst.size());
+        Path staleFile = filesAfterFirst.get(0);
+        // Simulate the async embedding pipeline having already indexed the first file
+        // (avoids depending on CompletableFuture.runAsync timing in the test).
+        McpEmbeddingDao.upsert(new McpEmbedding(
+                staleFile.toAbsolutePath().toString(), 0, source, "first version content",
+                fakeEmbeddingBytes(), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+        assertEquals(Set.of(staleFile.toAbsolutePath().toString()),
+                McpEmbeddingDao.findFilePathsBySourceUrl(source),
+                "sanity check: embedding row should be visible before resubmission");
+
+        storage.addContent(request(source, "Page", "second version content"));
+
+        assertTrue(McpEmbeddingDao.findFilePathsBySourceUrl(source).isEmpty(),
+                "Prior embedding rows should be deleted on resubmission");
+        List<Path> filesAfterSecond = findMcpResourceFilesFor(source);
+        assertEquals(1, filesAfterSecond.size(),
+                "Resubmitting the same source should replace the prior resource file, not accumulate a second one");
+        // ResourceReceiver names files with second-granularity timestamps, so a same-second
+        // resubmission can legitimately reuse the prior filename after it's deleted -- assert on
+        // content, not path identity, to prove the old version was actually replaced.
+        String survivingContent = Files.readString(filesAfterSecond.get(0));
+        assertTrue(survivingContent.contains("second version content"));
+        assertFalse(survivingContent.contains("first version content"));
+        assertEquals(1, storage.search("second").results().size());
+        assertTrue(storage.search("first").results().isEmpty());
+
+        cleanupDb(source);
+    }
+
+    @Test
+    void addContentDiscardsSelfReferentialLocalFileUrl() {
+        String selfReferentialUrl = "https://digitalme.breynisson.org/localFile?filePath=C%3A%2FUsers%2FLenovo%2Fnote.md";
+        cleanupDb(selfReferentialUrl);
+        storage.addContent(request("http://unrelated.com", "Unrelated", "unrelated seed content"));
+
+        AddContentRequest req = request(selfReferentialUrl, "note.md", "rendered page text content");
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertTrue(storage.search("rendered page text").results().isEmpty());
+        assertTrue(TextEntryDao.findByName(selfReferentialUrl).isEmpty());
 
         cleanupDb("http://unrelated.com");
     }

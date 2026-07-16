@@ -156,7 +156,8 @@ public class EmbeddingIndex {
 
     /**
      * Embeds the query and returns the top-K most similar files by cosine similarity,
-     * deduplicated to each file's single best-scoring chunk.
+     * deduplicated to each source URL's single best-scoring chunk (collapses re-submissions of the
+     * same logical document, even when stored under different mcp-resources file paths).
      * Returns an empty list if Ollama is unavailable or no embeddings are stored.
      */
     public List<ScoredResult> findSimilar(String query, int topK) {
@@ -175,11 +176,11 @@ public class EmbeddingIndex {
                     .sorted(Comparator.comparingDouble(ScoredResult::score).reversed())
                     .toList();
 
-            Map<String, ScoredResult> bestPerFile = new LinkedHashMap<>();
+            Map<String, ScoredResult> bestPerSource = new LinkedHashMap<>();
             for (ScoredResult r : scoredChunks) {
-                bestPerFile.putIfAbsent(r.filePath(), r);
+                bestPerSource.putIfAbsent(r.sourceUrl(), r);
             }
-            return bestPerFile.values().stream().limit(topK).toList();
+            return bestPerSource.values().stream().limit(topK).toList();
         } catch (Exception e) {
             log.warn("Embedding search failed", e);
             return List.of();

@@ -187,6 +187,25 @@ class EmbeddingIndexTest {
     }
 
     @Test
+    void findSimilarDedupsAcrossDifferentFilesWithSameSourceUrl() throws Exception {
+        Path dir = Files.createDirectories(dataDir.resolve("mcp-resources").resolve("2026-03"));
+        Path fileA = dir.resolve("a.txt");
+        Path fileB = dir.resolve("b.txt");
+        Files.writeString(fileA, "http://same-source.com\nfirst version content");
+        Files.writeString(fileB, "http://same-source.com\nsecond version content");
+
+        EmbeddingIndex index = new EmbeddingIndex(text -> new float[]{1.0f, 0.0f}, dataDir.toString());
+        index.indexFile(fileA);
+        index.indexFile(fileB);
+
+        List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
+
+        assertEquals(1, results.size(), "Two different files with the same sourceUrl should collapse to one result");
+        assertEquals("http://same-source.com", results.get(0).sourceUrl());
+        cleanup(fileA, fileB);
+    }
+
+    @Test
     void indexAllRemovesRowsForDeletedFiles() throws Exception {
         Path dir = Files.createDirectories(dataDir.resolve("mcp-resources").resolve("2026-03"));
         Path file = dir.resolve("temp.txt");

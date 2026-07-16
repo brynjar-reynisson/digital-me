@@ -54,6 +54,9 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
             log.info("addContent: {}", addContentRequest.getSource());
             String content = addContentRequest.getContent();
             if (addContentRequest.getSource().startsWith("http")) {
+                if (LocalFileEndpoint.isLocalFileUrl(addContentRequest.getSource())) {
+                    return discard(contentResponse, "Discarding self-referential /localFile content", addContentRequest.getSource());
+                }
                 if (ScreenshotCoverage.isCovered(addContentRequest.getSource())) {
                     return discard(contentResponse, "Discarding extension content already covered by screenshot capture", addContentRequest.getSource());
                 }
@@ -77,6 +80,7 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
                 }
                 addContentRequest.setContent(content);
             }
+            resourceReceiver.deleteExistingFor(addContentRequest.getSource());
             Path written = resourceReceiver.addContent(addContentRequest);
             CompletableFuture.runAsync(() -> embeddingIndex.indexFile(written));
             LuceneIndex.createOrUpdateIndex(content, addContentRequest.getSource(), addContentRequest.getName());

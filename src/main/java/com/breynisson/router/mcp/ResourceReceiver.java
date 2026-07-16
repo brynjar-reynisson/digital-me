@@ -1,6 +1,7 @@
 package com.breynisson.router.mcp;
 
 import com.breynisson.router.digitalme.AddContentRequest;
+import com.breynisson.router.jdbc.McpEmbeddingDao;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,6 +11,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 public class ResourceReceiver {
@@ -45,6 +47,23 @@ public class ResourceReceiver {
         Files.writeString(written, request.getSource() + "\n" + request.getContent());
         log.info("Wrote resource: {}/{}", monthDir.getFileName(), fileName);
         return written;
+    }
+
+    /**
+     * Deletes any previously indexed mcp-resources files (and their embedding rows) for this exact
+     * source URL. Looked up via the embedding table rather than a filesystem walk, since mcp-resources
+     * can hold tens of thousands of files and this runs on every addContent call.
+     */
+    public void deleteExistingFor(String sourceUrl) {
+        Set<String> filePaths = McpEmbeddingDao.findFilePathsBySourceUrl(sourceUrl);
+        McpEmbeddingDao.deleteBySourceUrl(sourceUrl);
+        for (String filePath : filePaths) {
+            try {
+                Files.deleteIfExists(Paths.get(filePath));
+            } catch (IOException e) {
+                log.warn("Error deleting stale resource file {}", filePath, e);
+            }
+        }
     }
 
     /** Extracts the source URL from an mcp-resources file (first line, trimmed). */

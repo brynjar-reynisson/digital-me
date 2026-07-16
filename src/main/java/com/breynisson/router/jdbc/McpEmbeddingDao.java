@@ -22,6 +22,12 @@ public class McpEmbeddingDao {
                 TRANSFORM);
     }
 
+    public static Set<String> findFilePathsBySourceUrl(String sourceUrl) {
+        return Set.copyOf(DatabaseAdapter.selectList(
+                "SELECT DISTINCT FILE_PATH FROM " + TABLE + " WHERE SOURCE_URL = ?",
+                DatabaseAdapter.RESULT_SET_STRING_TRANSFORM, sourceUrl));
+    }
+
     public static void upsert(McpEmbedding embedding) {
         DatabaseAdapter.runPreparedStatement(
                 "INSERT OR REPLACE INTO " + TABLE
@@ -32,6 +38,10 @@ public class McpEmbeddingDao {
 
     public static void deleteByFilePath(String filePath) {
         DatabaseAdapter.runPreparedStatement("DELETE FROM " + TABLE + " WHERE FILE_PATH = ?", filePath);
+    }
+
+    public static void deleteBySourceUrl(String sourceUrl) {
+        DatabaseAdapter.runPreparedStatement("DELETE FROM " + TABLE + " WHERE SOURCE_URL = ?", sourceUrl);
     }
 
     public static void deleteByModelNot(String currentModel) {
