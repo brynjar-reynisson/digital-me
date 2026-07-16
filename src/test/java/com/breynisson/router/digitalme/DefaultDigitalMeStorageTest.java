@@ -538,6 +538,71 @@ class DefaultDigitalMeStorageTest {
         cleanupDb("https://edition.cnn.com/2026/07/16/world/live-news/iran-war-trump");
     }
 
+    @Test
+    void addContentExtractsRedditPostAndCommentsFromRealExtensionPayloadShape() throws com.fasterxml.jackson.core.JsonProcessingException {
+        String html = """
+                <html>
+                <body>
+                <nav>Home Popular All Explore</nav>
+                <h1 slot="title">Should I confront my roommate about this?</h1>
+                <shreddit-post-text-body slot="text-body" view-context="CommentsPage">
+                  <div property="schema:articleBody">
+                    <p>My roommate has been leaving dishes in the sink for two weeks straight and I am at my wit's end.</p>
+                  </div>
+                </shreddit-post-text-body>
+                <shreddit-comment thingid="t1_abc123" depth="0">
+                  <div slot="comment">Just talk to them directly, passive aggressive notes never work.</div>
+                </shreddit-comment>
+                <shreddit-comment thingid="t1_def456" depth="1">
+                  <div slot="comment">Agreed, communication is key in any living situation.</div>
+                </shreddit-comment>
+                </body>
+                </html>
+                """;
+        String extensionShapedPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(html);
+        AddContentRequest req = request("https://www.reddit.com/r/relationships/comments/1abcxyz/should_i_confront_my_roommate_about_this/", "Should I confront my roommate", extensionShapedPayload);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertEquals(1, storage.search("dishes").results().size());
+        assertEquals(1, storage.search("passive").results().size());
+        assertEquals(1, storage.search("communication").results().size());
+        assertFalse(TextEntryDao.findByName("https://www.reddit.com/r/relationships/comments/1abcxyz/should_i_confront_my_roommate_about_this/").isEmpty());
+
+        cleanupDb("https://www.reddit.com/r/relationships/comments/1abcxyz/should_i_confront_my_roommate_about_this/");
+    }
+
+    @Test
+    void addContentDiscardsRedditFeedPage() throws com.fasterxml.jackson.core.JsonProcessingException {
+        cleanupDb("https://www.reddit.com/r/relationships/");
+        storage.addContent(request("http://unrelated-reddit-seed.com", "Unrelated", "unrelated seed content"));
+
+        String html = """
+                <html>
+                <body>
+                <nav>Home Popular All Explore</nav>
+                <shreddit-post view-context="SubredditFeed">
+                  <div property="schema:articleBody">Teaser text for a post about relocating to a new city for work.</div>
+                </shreddit-post>
+                <shreddit-post view-context="SubredditFeed">
+                  <div property="schema:articleBody">Teaser text for a different post about a weekend trip.</div>
+                </shreddit-post>
+                </body>
+                </html>
+                """;
+        String extensionShapedPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(html);
+        AddContentRequest req = request("https://www.reddit.com/r/relationships/", "Relationships Subreddit", extensionShapedPayload);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertTrue(TextEntryDao.findByName("https://www.reddit.com/r/relationships/").isEmpty());
+        assertTrue(storage.search("relocating").results().isEmpty());
+
+        cleanupDb("http://unrelated-reddit-seed.com");
+    }
+
     private static AddContentRequest request(String source, String name, String content) {
         return AddContentRequests.of(source, name, content);
     }
