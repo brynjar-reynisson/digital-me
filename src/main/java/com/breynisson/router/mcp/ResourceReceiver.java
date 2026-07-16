@@ -2,6 +2,7 @@ package com.breynisson.router.mcp;
 
 import com.breynisson.router.digitalme.AddContentRequest;
 import com.breynisson.router.jdbc.McpEmbeddingDao;
+import com.breynisson.router.jdbc.SummaryCacheDao;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,6 +53,7 @@ public class ResourceReceiver {
     public void deleteExistingFor(String sourceUrl) {
         Set<String> filePaths = McpEmbeddingDao.findFilePathsBySourceUrl(sourceUrl);
         McpEmbeddingDao.deleteBySourceUrl(sourceUrl);
+        SummaryCacheDao.deleteBySourceUrl(sourceUrl);
         for (String filePath : filePaths) {
             try {
                 Files.deleteIfExists(Paths.get(filePath));

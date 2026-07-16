@@ -4,6 +4,7 @@ import com.breynisson.router.digitalme.AddContentRequest;
 import com.breynisson.router.digitalme.AddContentRequests;
 import com.breynisson.router.jdbc.DatabaseAdapter;
 import com.breynisson.router.jdbc.McpEmbeddingDao;
+import com.breynisson.router.jdbc.SummaryCacheDao;
 import com.breynisson.router.jdbc.model.McpEmbedding;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -62,12 +63,14 @@ class ResourceReceiverTest {
         Path staleFile = receiver.addContent(AddContentRequests.of(sourceUrl, "Old", "old content"));
         McpEmbeddingDao.upsert(new McpEmbedding(staleFile.toAbsolutePath().toString(), 0, sourceUrl,
                 "old content", embeddingBytes(), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+        SummaryCacheDao.upsert(sourceUrl, "cached summary");
 
         receiver.deleteExistingFor(sourceUrl);
 
         assertFalse(Files.exists(staleFile), "Stale resource file should be deleted");
         assertTrue(McpEmbeddingDao.findFilePathsBySourceUrl(sourceUrl).isEmpty(),
                 "Stale embedding rows should be deleted");
+        assertNull(SummaryCacheDao.find(sourceUrl), "Cached summary should be deleted");
     }
 
     @Test
@@ -77,11 +80,13 @@ class ResourceReceiverTest {
         Path keepFile = receiver.addContent(AddContentRequests.of("http://keep.com", "Keep", "keep content"));
         McpEmbeddingDao.upsert(new McpEmbedding(keepFile.toAbsolutePath().toString(), 0, "http://keep.com",
                 "keep content", embeddingBytes(), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+        SummaryCacheDao.upsert("http://keep.com", "keep summary");
 
         receiver.deleteExistingFor("http://different-source.com");
 
         assertTrue(Files.exists(keepFile));
         assertFalse(McpEmbeddingDao.findFilePathsBySourceUrl("http://keep.com").isEmpty());
+        assertEquals("keep summary", SummaryCacheDao.find("http://keep.com"));
     }
 
     @Test
