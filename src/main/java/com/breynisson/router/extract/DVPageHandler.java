@@ -3,7 +3,11 @@ package com.breynisson.router.extract;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 
+import java.util.regex.Pattern;
+
 public class DVPageHandler implements PageHandler {
+
+    private static final Pattern ARTICLE_URL_PATTERN = Pattern.compile("/\\d+/\\d{4}/\\d{2}/\\d{2}/");
 
     @Override
     public boolean matches(String url) {
@@ -22,5 +26,15 @@ public class DVPageHandler implements PageHandler {
             return paragraphs;
         }
         return headline.text() + "\n\n" + paragraphs;
+    }
+
+    @Override
+    public boolean looksLikeArticleUrl(String url) {
+        return ARTICLE_URL_PATTERN.matcher(url).find();
+    }
+
+    @Override
+    public String siteName() {
+        return "dv";
     }
 }

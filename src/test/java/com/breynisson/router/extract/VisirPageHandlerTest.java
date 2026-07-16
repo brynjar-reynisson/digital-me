@@ -69,4 +69,19 @@ class VisirPageHandlerTest {
 
         assertThat(handler.extract(doc)).isNull();
     }
+
+    @Test
+    void looksLikeArticleUrlForArticlePath() {
+        assertThat(handler.looksLikeArticleUrl("https://www.visir.is/g/20262909759d/messi-allt-i-ollu")).isTrue();
+    }
+
+    @Test
+    void doesNotLookLikeArticleUrlForFrontPage() {
+        assertThat(handler.looksLikeArticleUrl("https://www.visir.is")).isFalse();
+    }
+
+    @Test
+    void siteNameIsVisir() {
+        assertThat(handler.siteName()).isEqualTo("visir");
+    }
 }

@@ -24,4 +24,14 @@ public class FotboltiPageHandler implements PageHandler {
         }
         return headline.text() + "\n\n" + body;
     }
+
+    @Override
+    public boolean looksLikeArticleUrl(String url) {
+        return url.contains("/news/");
+    }
+
+    @Override
+    public String siteName() {
+        return "fotbolti";
+    }
 }

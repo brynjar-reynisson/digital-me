@@ -67,4 +67,19 @@ class FotboltiPageHandlerTest {
 
         assertThat(handler.extract(doc)).isNull();
     }
+
+    @Test
+    void looksLikeArticleUrlForArticlePath() {
+        assertThat(handler.looksLikeArticleUrl("https://fotbolti.net/news/16-07-2026/otrulegir-yfirburdur-argentinu")).isTrue();
+    }
+
+    @Test
+    void doesNotLookLikeArticleUrlForFrontPage() {
+        assertThat(handler.looksLikeArticleUrl("https://www.fotbolti.net")).isFalse();
+    }
+
+    @Test
+    void siteNameIsFotbolti() {
+        assertThat(handler.siteName()).isEqualTo("fotbolti");
+    }
 }

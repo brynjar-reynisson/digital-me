@@ -22,4 +22,14 @@ public class VisirPageHandler implements PageHandler {
         }
         return headline.text() + "\n\n" + body.text();
     }
+
+    @Override
+    public boolean looksLikeArticleUrl(String url) {
+        return url.contains("/g/");
+    }
+
+    @Override
+    public String siteName() {
+        return "visir";
+    }
 }

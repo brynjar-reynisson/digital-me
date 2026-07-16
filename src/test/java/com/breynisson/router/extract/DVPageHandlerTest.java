@@ -81,4 +81,19 @@ class DVPageHandlerTest {
 
         assertThat(handler.extract(doc)).isNull();
     }
+
+    @Test
+    void looksLikeArticleUrlForArticlePath() {
+        assertThat(handler.looksLikeArticleUrl("https://www.dv.is/433/2026/07/15/storstjarna-faer-a-baukinn")).isTrue();
+    }
+
+    @Test
+    void doesNotLookLikeArticleUrlForFrontPage() {
+        assertThat(handler.looksLikeArticleUrl("https://www.dv.is")).isFalse();
+    }
+
+    @Test
+    void siteNameIsDv() {
+        assertThat(handler.siteName()).isEqualTo("dv");
+    }
 }
