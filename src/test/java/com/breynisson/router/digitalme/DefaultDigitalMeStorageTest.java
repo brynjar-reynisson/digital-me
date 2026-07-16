@@ -256,6 +256,80 @@ class DefaultDigitalMeStorageTest {
         cleanupDb("https://www.visir.is/g/456/team-wins-championship");
     }
 
+    @Test
+    void addContentExtractsDvArticleBodyFromRealExtensionPayloadShape() throws com.fasterxml.jackson.core.JsonProcessingException {
+        String html = """
+                <html>
+                <body>
+                <nav>Home News Sports Life Opinion</nav>
+                <article class="node node--article">
+                  <div class="node__content">
+                    <div class="article-header">
+                      <div class="field field--name-title">
+                        <h1>Star Gets Called Out</h1>
+                      </div>
+                    </div>
+                    <div class="article-body photoswipe-gallery">
+                      <div class="clearfix text-formatted field field--name-body field--type-text-with-summary field--label-hidden field__item">
+                        <p>The player was criticized after photos surfaced from a party.</p>
+                        <article class="media media--type-image media--view-mode-default">
+                          <div class="field__label visually-hidden">Mynd</div>
+                        </article>
+                        <p>Fans reacted strongly to the news on social media.</p>
+                      </div>
+                    </div>
+                    <div class="article-footer-region">
+                      <h2>Fleiri fréttir</h2>
+                      <div class="views-content">Unrelated Story About Something Else</div>
+                    </div>
+                  </div>
+                </article>
+                </body>
+                </html>
+                """;
+        String extensionShapedPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(html);
+        AddContentRequest req = request("https://www.dv.is/433/2026/07/16/star-gets-called-out", "Star Gets Called Out", extensionShapedPayload);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertEquals(1, storage.search("criticized").results().size());
+        assertTrue(storage.search("Unrelated").results().isEmpty());
+        assertFalse(TextEntryDao.findByName("https://www.dv.is/433/2026/07/16/star-gets-called-out").isEmpty());
+
+        cleanupDb("https://www.dv.is/433/2026/07/16/star-gets-called-out");
+    }
+
+    @Test
+    void addContentDiscardsDvFrontPage() throws com.fasterxml.jackson.core.JsonProcessingException {
+        cleanupDb("https://www.dv.is");
+        storage.addContent(request("http://unrelated-dv-seed.com", "Unrelated", "unrelated seed content"));
+
+        String html = """
+                <html>
+                <body>
+                <nav>Home News Sports Life Opinion</nav>
+                <div class="clearfix text-formatted field field--name-body field--type-text-with-summary field--label-hidden field__item">
+                  <div class="tarot-promo"><h4>Tarot Cards</h4></div>
+                </div>
+                <div class="clearfix text-formatted field field--name-body field--type-text-with-summary field--label-hidden field__item">
+                  <p>Address 123<br>City</p>
+                </div>
+                </body>
+                </html>
+                """;
+        String extensionShapedPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(html);
+        AddContentRequest req = request("https://www.dv.is", "DV Front Page", extensionShapedPayload);
+
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertTrue(TextEntryDao.findByName("https://www.dv.is").isEmpty());
+        assertTrue(storage.search("Tarot").results().isEmpty());
+
+        cleanupDb("http://unrelated-dv-seed.com");
+    }
+
     private static AddContentRequest request(String source, String name, String content) {
         return AddContentRequests.of(source, name, content);
     }
