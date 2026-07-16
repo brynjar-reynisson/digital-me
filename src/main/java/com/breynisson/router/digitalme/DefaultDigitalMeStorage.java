@@ -53,10 +53,10 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
         try {
             log.info("addContent: {}", addContentRequest.getSource());
             String content = addContentRequest.getContent();
+            if (LocalFileEndpoint.isLocalFileUrl(addContentRequest.getSource())) {
+                return discard(contentResponse, "Discarding self-referential /localFile content", addContentRequest.getSource());
+            }
             if (addContentRequest.getSource().startsWith("http")) {
-                if (LocalFileEndpoint.isLocalFileUrl(addContentRequest.getSource())) {
-                    return discard(contentResponse, "Discarding self-referential /localFile content", addContentRequest.getSource());
-                }
                 if (ScreenshotCoverage.isCovered(addContentRequest.getSource())) {
                     return discard(contentResponse, "Discarding extension content already covered by screenshot capture", addContentRequest.getSource());
                 }

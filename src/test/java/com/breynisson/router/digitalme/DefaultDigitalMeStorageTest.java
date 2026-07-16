@@ -229,6 +229,25 @@ class DefaultDigitalMeStorageTest {
     }
 
     @Test
+    void addContentDiscardsSelfReferentialLocalFileUrlEvenWithoutHttpScheme() {
+        // Real-world data showed a Chrome-extension capture with a malformed source URL missing
+        // its scheme prefix (e.g. "digitalme.breynisson.org/localFile?..." instead of "https://...").
+        // A check nested only inside the startsWith("http") branch would miss this entirely.
+        String schemeLessSelfReferentialUrl = "digitalme.breynisson.org/localFile?filePath=C%3A%2FUsers%2FLenovo%2Fnote.md";
+        cleanupDb(schemeLessSelfReferentialUrl);
+        storage.addContent(request("http://unrelated2.com", "Unrelated", "unrelated seed content"));
+
+        AddContentRequest req = request(schemeLessSelfReferentialUrl, "note.md", "rendered page text content");
+        AddContentResponse response = storage.addContent(req);
+
+        assertTrue(response.isSuccess());
+        assertTrue(storage.search("rendered page text").results().isEmpty());
+        assertTrue(TextEntryDao.findByName(schemeLessSelfReferentialUrl).isEmpty());
+
+        cleanupDb("http://unrelated2.com");
+    }
+
+    @Test
     void addContentStoresUncoveredLinkedinSubpage() {
         AddContentRequest req = request("https://www.linkedin.com/pulse/some-article", "Some Article", "article body text");
 
