@@ -392,6 +392,63 @@ class DefaultDigitalMeStorageTest {
         cleanupDb("http://unrelated-fotbolti-seed.com");
     }
 
+    @Test
+    void addContentFallsBackAndReportsOnceWhenVisirLayoutChanges() throws java.io.IOException {
+        String firstHtml = """
+                <html>
+                <body>
+                <nav>Home News Sports Weather Opinion</nav>
+                <h1>Team Wins Championship Final</h1>
+                <div class="some-new-layout">The home team secured a dramatic victory in the final minutes.</div>
+                </body>
+                </html>
+                """;
+        String firstPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(firstHtml);
+        AddContentRequest firstReq = request("https://www.visir.is/g/111/team-wins-championship", "Team Wins", firstPayload);
+
+        AddContentResponse firstResponse = storage.addContent(firstReq);
+
+        assertTrue(firstResponse.isSuccess());
+        assertEquals(1, storage.search("dramatic").results().size());
+
+        java.nio.file.Path errorsDir = dataDir.resolve("errors");
+        java.util.List<java.nio.file.Path> filesAfterFirst;
+        try (java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.list(errorsDir)) {
+            filesAfterFirst = stream.toList();
+        }
+        assertEquals(1, filesAfterFirst.size());
+        String reportContent = java.nio.file.Files.readString(filesAfterFirst.get(0));
+        assertTrue(reportContent.contains("https://www.visir.is"));
+        assertTrue(reportContent.contains("VisirPageHandler"));
+        assertTrue(reportContent.contains("Falling back to default jsoup handling"));
+
+        String secondHtml = """
+                <html>
+                <body>
+                <nav>Home News Sports Weather Opinion</nav>
+                <h1>Another Story With Changed Layout</h1>
+                <div class="some-new-layout">The visiting team staged a spectacular comeback in the second half.</div>
+                </body>
+                </html>
+                """;
+        String secondPayload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(secondHtml);
+        AddContentRequest secondReq = request("https://www.visir.is/g/222/another-story-with-changed-layout", "Another Story", secondPayload);
+
+        AddContentResponse secondResponse = storage.addContent(secondReq);
+
+        assertTrue(secondResponse.isSuccess());
+        assertEquals(1, storage.search("spectacular").results().size());
+
+        java.util.List<java.nio.file.Path> filesAfterSecond;
+        try (java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.list(errorsDir)) {
+            filesAfterSecond = stream.toList();
+        }
+        assertEquals(1, filesAfterSecond.size());
+
+        cleanupDb("https://www.visir.is/g/111/team-wins-championship");
+        cleanupDb("https://www.visir.is/g/222/another-story-with-changed-layout");
+    }
+
     private static AddContentRequest request(String source, String name, String content) {
         return AddContentRequests.of(source, name, content);
     }

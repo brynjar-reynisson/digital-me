@@ -14,6 +14,7 @@ import org.jsoup.Jsoup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -30,10 +31,12 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
     private final Lock lock = new ReentrantLock();
     private final ResourceReceiver resourceReceiver;
     private final EmbeddingIndex embeddingIndex;
+    private final LayoutChangeReporter layoutChangeReporter;
 
     public DefaultDigitalMeStorage(String dataDir, EmbeddingIndex embeddingIndex) {
         this.resourceReceiver = new ResourceReceiver(dataDir);
         this.embeddingIndex = embeddingIndex;
+        this.layoutChangeReporter = new LayoutChangeReporter(dataDir);
     }
 
     @Override
@@ -56,11 +59,17 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
                 }
                 Optional<PageHandler> handler = PageHandlers.find(addContentRequest.getSource());
                 if (handler.isPresent()) {
-                    String extracted = handler.get().extract(Jsoup.parse(decodeIfJsonEncoded(content)));
-                    if (extracted == null) {
+                    PageHandler pageHandler = handler.get();
+                    String decoded = decodeIfJsonEncoded(content);
+                    String extracted = pageHandler.extract(Jsoup.parse(decoded));
+                    if (extracted != null) {
+                        content = normalize(extracted);
+                    } else if (pageHandler.looksLikeArticleUrl(addContentRequest.getSource())) {
+                        reportLayoutChange(pageHandler, addContentRequest.getSource());
+                        content = normalize(Jsoup.parse(decoded).text());
+                    } else {
                         return discard(contentResponse, "Discarding content with no extractable body", addContentRequest.getSource());
                     }
-                    content = normalize(extracted);
                 } else if (addContentRequest.getSource().startsWith("https://www.youtube.com")) {
                     content = new YouTubeCaptionExtractor().extractFromYouTubeUrl(addContentRequest.getSource());
                 } else {
@@ -81,6 +90,23 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
             lock.unlock();
         }
         return contentResponse;
+    }
+
+    private void reportLayoutChange(PageHandler pageHandler, String source) {
+        String domain = extractDomain(source);
+        String message = String.format(
+                "%s has changed the layout, so %s can't find the main content. Falling back to default jsoup handling.",
+                domain, pageHandler.getClass().getSimpleName());
+        layoutChangeReporter.report(pageHandler.siteName(), message);
+    }
+
+    private static String extractDomain(String source) {
+        try {
+            URI uri = URI.create(source);
+            return uri.getScheme() + "://" + uri.getHost();
+        } catch (Exception e) {
+            return source;
+        }
     }
 
     private static AddContentResponse discard(AddContentResponse contentResponse, String reason, String source) {
