@@ -22,4 +22,10 @@ class PageHandlersTest {
         assertThat(PageHandlers.find("https://www.dv.is/433/2026/07/15/some-article"))
                 .containsInstanceOf(DVPageHandler.class);
     }
+
+    @Test
+    void findsFotboltiHandlerForFotboltiUrl() {
+        assertThat(PageHandlers.find("https://fotbolti.net/news/16-07-2026/some-article"))
+                .containsInstanceOf(FotboltiPageHandler.class);
+    }
 }
