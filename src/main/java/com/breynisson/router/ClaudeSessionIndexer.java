@@ -23,7 +23,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -35,7 +34,6 @@ public class ClaudeSessionIndexer {
 
     private static final Logger log = LoggerFactory.getLogger(ClaudeSessionIndexer.class);
     private static final Path CLAUDE_PROJECTS = Path.of(System.getProperty("user.home"), ".claude", "projects");
-    private static final DateTimeFormatter TIMESTAMP_FMT = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final EmbeddingIndex embeddingIndex;
@@ -172,11 +170,14 @@ public class ClaudeSessionIndexer {
         }
     }
 
+    static String buildFileName(String projectName, LocalDateTime sessionStart) {
+        return ResourceReceiver.timestampPrefix(sessionStart) + "-claudecode-" + projectName + ".txt";
+    }
+
     private Path writeResourceFile(String sourceUrl, String projectName, String content, LocalDateTime sessionStart) {
         try {
             String yearMonth = YearMonth.from(sessionStart).toString();
-            String timestamp = sessionStart.format(TIMESTAMP_FMT);
-            String fileName = yearMonth + "-claudecode-" + projectName + "-" + timestamp + ".txt";
+            String fileName = buildFileName(projectName, sessionStart);
             Path monthDir = mcpResourcesDir.resolve(yearMonth);
             Files.createDirectories(monthDir);
             Path file = monthDir.resolve(fileName);
