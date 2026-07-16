@@ -18,9 +18,15 @@ public class CNNPageHandler implements PageHandler {
     @Override
     public String extract(Document doc) {
         Element articleBody = doc.selectFirst("div[itemprop=articleBody]");
-        Elements paragraphs = articleBody != null
-                ? articleBody.select("p[data-component-name=paragraph]")
-                : doc.select("p[data-component-name=paragraph]");
+        if (articleBody != null) {
+            String paragraphs = articleBody.select("p[data-component-name=paragraph]").text();
+            Element headline = doc.selectFirst("h1");
+            if (headline == null) {
+                return paragraphs;
+            }
+            return headline.text() + "\n\n" + paragraphs;
+        }
+        Elements paragraphs = doc.select("p[data-component-name=paragraph]");
         if (paragraphs.isEmpty()) {
             return null;
         }

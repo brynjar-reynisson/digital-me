@@ -72,6 +72,53 @@ class CNNPageHandlerTest {
         assertThat(result).contains("Iran War Live Updates");
         assertThat(result).contains("Officials say Iran remains open to diplomatic talks despite recent tensions.");
         assertThat(result).contains("The president addressed reporters about the ongoing situation in the region.");
+        assertThat(result).doesNotContain("Iran signals openness to diplomacy");
+        assertThat(result).doesNotContain("Trump responds to latest developments");
+    }
+
+    @Test
+    void returnsHeadlineOnlyWhenArticleBodyPresentButHasNoMatchingParagraphs() {
+        String html = """
+                <html>
+                <body>
+                <nav>Home US World Politics Business</nav>
+                <h1 data-editable="headlineText" class="headline__text" id="maincontent">Meteorite Sheds Light on Ancient Water</h1>
+                <div class="article__content" itemprop="articleBody">
+                  <div data-component-name="video">Video content only, no paragraph markup.</div>
+                </div>
+                </body>
+                </html>
+                """;
+        Document doc = Jsoup.parse(html);
+
+        String result = handler.extract(doc);
+
+        assertThat(result).isNotNull();
+        assertThat(result).contains("Meteorite Sheds Light on Ancient Water");
+    }
+
+    @Test
+    void scopesToArticleBodyWhenPresentEvenIfOtherParagraphsExistElsewhere() {
+        String html = """
+                <html>
+                <body>
+                <nav>Home US World Politics Business</nav>
+                <h1 data-editable="headlineText" class="headline__text" id="maincontent">Meteorite Sheds Light on Ancient Water</h1>
+                <div class="teaser">
+                  <p data-component-name="paragraph">This is unrelated teaser content from elsewhere on the page.</p>
+                </div>
+                <div class="article__content" itemprop="articleBody">
+                  <p data-component-name="paragraph">Only one fragment was recovered from the meteorite.</p>
+                </div>
+                </body>
+                </html>
+                """;
+        Document doc = Jsoup.parse(html);
+
+        String result = handler.extract(doc);
+
+        assertThat(result).contains("Only one fragment was recovered from the meteorite.");
+        assertThat(result).doesNotContain("unrelated teaser content");
     }
 
     @Test
