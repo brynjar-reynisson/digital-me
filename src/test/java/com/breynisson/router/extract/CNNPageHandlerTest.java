@@ -78,4 +78,9 @@ class CNNPageHandlerTest {
     void siteNameIsCnn() {
         assertThat(handler.siteName()).isEqualTo("cnn");
     }
+
+    @Test
+    void doesNotLookLikeArticleUrlForLiveBlog() {
+        assertThat(handler.looksLikeArticleUrl("https://edition.cnn.com/2026/07/16/world/live-news/iran-war-trump")).isFalse();
+    }
 }

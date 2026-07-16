@@ -30,7 +30,7 @@ public class CNNPageHandler implements PageHandler {
 
     @Override
     public boolean looksLikeArticleUrl(String url) {
-        return ARTICLE_URL_PATTERN.matcher(url).find();
+        return ARTICLE_URL_PATTERN.matcher(url).find() && !url.contains("/live-news/");
     }
 
     @Override
