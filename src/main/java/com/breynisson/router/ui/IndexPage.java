@@ -8,6 +8,7 @@ import com.breynisson.router.digitalme.SearchResult;
 import com.breynisson.router.digitalme.SemanticSearch;
 import com.breynisson.router.mcp.EmbeddingClient;
 import com.breynisson.router.mcp.SummarizeClient;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.view.RedirectView;
 import org.springframework.web.util.HtmlUtils;
@@ -18,7 +19,6 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.LinkedHashSet;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @RestController
 public class IndexPage {
@@ -74,9 +74,12 @@ public class IndexPage {
         return new SummarizeResponse(summary != null ? summary : "");
     }
 
-    @GetMapping("/localFile")
+    @GetMapping(value = "/localFile", produces = MediaType.TEXT_HTML_VALUE)
     public String localFile(@RequestParam String filePath) throws IOException {
         String content = Files.readString(Paths.get(filePath));
+        if (MarkdownPageRenderer.isMarkdownFile(filePath)) {
+            return MarkdownPageRenderer.render(content);
+        }
         content = HtmlUtils.htmlEscape(content);
         return "<html><body><p style='white-space: pre-wrap;'>" +
                 content +
