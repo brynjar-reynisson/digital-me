@@ -21,7 +21,7 @@ function App() {
     fetch('/summarize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: snippet }),
+      body: JSON.stringify({ text: snippet, source }),
     })
       .then(r => r.json() as Promise<SummarizeResponse>)
       .then(d => setSummaries(s => ({ ...s, [source]: d.summary || '' })))
