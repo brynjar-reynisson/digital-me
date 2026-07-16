@@ -3,7 +3,7 @@ package com.breynisson.router.extract;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 
-public class DvPageHandler implements PageHandler {
+public class DVPageHandler implements PageHandler {
 
     @Override
     public boolean matches(String url) {

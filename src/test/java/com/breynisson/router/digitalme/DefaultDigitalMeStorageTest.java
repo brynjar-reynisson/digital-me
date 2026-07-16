@@ -257,7 +257,7 @@ class DefaultDigitalMeStorageTest {
     }
 
     @Test
-    void addContentExtractsDvArticleBodyFromRealExtensionPayloadShape() throws com.fasterxml.jackson.core.JsonProcessingException {
+    void addContentExtractsDVArticleBodyFromRealExtensionPayloadShape() throws com.fasterxml.jackson.core.JsonProcessingException {
         String html = """
                 <html>
                 <body>
@@ -301,7 +301,7 @@ class DefaultDigitalMeStorageTest {
     }
 
     @Test
-    void addContentDiscardsDvFrontPage() throws com.fasterxml.jackson.core.JsonProcessingException {
+    void addContentDiscardsDVFrontPage() throws com.fasterxml.jackson.core.JsonProcessingException {
         cleanupDb("https://www.dv.is");
         storage.addContent(request("http://unrelated-dv-seed.com", "Unrelated", "unrelated seed content"));
 

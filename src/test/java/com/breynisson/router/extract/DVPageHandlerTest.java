@@ -6,12 +6,12 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class DvPageHandlerTest {
+class DVPageHandlerTest {
 
-    private final DvPageHandler handler = new DvPageHandler();
+    private final DVPageHandler handler = new DVPageHandler();
 
     @Test
-    void matchesDvUrl() {
+    void matchesDVUrl() {
         assertThat(handler.matches("https://www.dv.is/433/2026/07/15/storstjarna-faer-a-baukinn")).isTrue();
     }
 

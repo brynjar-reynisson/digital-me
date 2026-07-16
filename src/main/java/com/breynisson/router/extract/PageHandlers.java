@@ -5,7 +5,7 @@ import java.util.Optional;
 
 public final class PageHandlers {
 
-    private static final List<PageHandler> HANDLERS = List.of(new VisirPageHandler(), new DvPageHandler());
+    private static final List<PageHandler> HANDLERS = List.of(new VisirPageHandler(), new DVPageHandler());
 
     private PageHandlers() {
     }

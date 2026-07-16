@@ -18,8 +18,8 @@ class PageHandlersTest {
     }
 
     @Test
-    void findsDvHandlerForDvUrl() {
+    void findsDVHandlerForDVUrl() {
         assertThat(PageHandlers.find("https://www.dv.is/433/2026/07/15/some-article"))
-                .containsInstanceOf(DvPageHandler.class);
+                .containsInstanceOf(DVPageHandler.class);
     }
 }
