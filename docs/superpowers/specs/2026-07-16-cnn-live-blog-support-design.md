@@ -17,6 +17,8 @@ Fetched the real live-blog URL directly. Key findings:
 
 ### `CNNPageHandler.extract()` — two-tier body lookup
 
+**Note (post-implementation correction):** the code below is the *initial* design, kept for historical context. Task 1's review caught a real bug in it — collapsing "articleBody absent" and "articleBody present but empty of paragraphs" into a single `paragraphs.isEmpty()` check silently changed standard-article behavior (e.g. a video-only article, which has `articleBody` but no matching paragraphs, would go from returning headline-only to returning `null`, triggering a spurious layout-change alert). The shipped fix restructures this into two genuinely separate branches — see `src/main/java/com/breynisson/router/extract/CNNPageHandler.java` for the actual final code, which is byte-for-byte identical to the pre-live-blog-support code in the `articleBody != null` case.
+
 ```java
 @Override
 public String extract(Document doc) {

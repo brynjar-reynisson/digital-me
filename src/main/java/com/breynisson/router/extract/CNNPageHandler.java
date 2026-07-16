@@ -17,6 +17,10 @@ public class CNNPageHandler implements PageHandler {
 
     @Override
     public String extract(Document doc) {
+        // Kept as two separate branches, not a ternary over paragraphs: when articleBody is
+        // present we must return headline-only, never null, even with zero matching paragraphs
+        // (e.g. a video-only article) -- collapsing this back into one isEmpty() check causes a
+        // spurious layout-change alert for a page whose layout never changed.
         Element articleBody = doc.selectFirst("div[itemprop=articleBody]");
         if (articleBody != null) {
             String paragraphs = articleBody.select("p[data-component-name=paragraph]").text();
