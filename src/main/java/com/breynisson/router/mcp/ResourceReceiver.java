@@ -32,12 +32,7 @@ public class ResourceReceiver {
         String rawName = request.getName() != null ? request.getName() : request.getSource();
         // prefix with day-hour-minute-second to avoid conflicts; sanitize invalid chars
         LocalDateTime now = LocalDateTime.now();
-        String fileName = String.format("%02d-%02d-%02d-%02d-%s",
-                now.getDayOfMonth(),
-                now.getHour(),
-                now.getMinute(),
-                now.getSecond(),
-                rawName);
+        String fileName = timestampPrefix(now) + "-" + rawName;
         fileName = INVALID_CHARS.matcher(fileName).replaceAll("_");
         if (!fileName.toLowerCase().endsWith(".txt")) {
             fileName += ".txt";
@@ -64,6 +59,15 @@ public class ResourceReceiver {
                 log.warn("Error deleting stale resource file {}", filePath, e);
             }
         }
+    }
+
+    /** Day-hour-minute-second prefix shared by all mcp-resources filename writers, to keep the convention consistent. */
+    public static String timestampPrefix(LocalDateTime time) {
+        return String.format("%02d-%02d-%02d-%02d",
+                time.getDayOfMonth(),
+                time.getHour(),
+                time.getMinute(),
+                time.getSecond());
     }
 
     /** Extracts the source URL from an mcp-resources file (first line, trimmed). */
