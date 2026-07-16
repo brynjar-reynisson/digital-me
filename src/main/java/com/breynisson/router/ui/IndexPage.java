@@ -6,6 +6,7 @@ import com.breynisson.router.digitalme.DigitalMeStorage;
 import com.breynisson.router.digitalme.SearchResponse;
 import com.breynisson.router.digitalme.SearchResult;
 import com.breynisson.router.digitalme.SemanticSearch;
+import com.breynisson.router.jdbc.McpEmbeddingDao;
 import com.breynisson.router.mcp.EmbeddingClient;
 import com.breynisson.router.mcp.SummarizeClient;
 import org.springframework.http.MediaType;
@@ -16,9 +17,12 @@ import org.springframework.web.util.HtmlUtils;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 @RestController
 public class IndexPage {
@@ -76,14 +80,32 @@ public class IndexPage {
 
     @GetMapping(value = "/localFile", produces = MediaType.TEXT_HTML_VALUE)
     public String localFile(@RequestParam String filePath) throws IOException {
-        String content = Files.readString(Paths.get(filePath));
-        if (MarkdownPageRenderer.isMarkdownFile(filePath)) {
+        Path resolved = resolveFilePath(filePath);
+        String content = Files.readString(resolved);
+        if (MarkdownPageRenderer.isMarkdownFile(resolved.toString())) {
             return MarkdownPageRenderer.render(content);
         }
         content = HtmlUtils.htmlEscape(content);
         return "<html><body><p style='white-space: pre-wrap;'>" +
                 content +
                 "</p></body></html>";
+    }
+
+    private static final Pattern NON_LOCAL_SOURCE_SCHEME = Pattern.compile("^(?!https?://)[a-zA-Z][a-zA-Z0-9+.-]*://");
+
+    /**
+     * filePath is normally an actual filesystem path, but search results for synthetic sources
+     * (e.g. claude:// Claude Code session URLs) put a non-path source identifier there instead;
+     * resolve those via the source-URL index of the mcp-resources file that was indexed for them.
+     */
+    private static Path resolveFilePath(String filePath) {
+        if (NON_LOCAL_SOURCE_SCHEME.matcher(filePath).find()) {
+            Set<String> candidates = McpEmbeddingDao.findFilePathsBySourceUrl(filePath);
+            if (!candidates.isEmpty()) {
+                return Paths.get(candidates.iterator().next());
+            }
+        }
+        return Paths.get(filePath);
     }
 
     @PostMapping(value="/addContent", consumes = "application/json", produces = "application/json")
