@@ -28,4 +28,10 @@ class PageHandlersTest {
         assertThat(PageHandlers.find("https://fotbolti.net/news/16-07-2026/some-article"))
                 .containsInstanceOf(FotboltiPageHandler.class);
     }
+
+    @Test
+    void findsCNNHandlerForCNNUrl() {
+        assertThat(PageHandlers.find("https://edition.cnn.com/2026/07/15/science/some-article"))
+                .containsInstanceOf(CNNPageHandler.class);
+    }
 }
