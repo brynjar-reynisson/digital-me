@@ -22,7 +22,7 @@ SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora
 BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
 UIA_CAPABLE_BROWSERS = {"chrome", "edge"}
 SUBPAGE_GATED_SITES = {"quora", "linkedin"}
-CROP_CONTENT_SITES = {"quora", "linkedin", "facebook"}
+CROP_CONTENT_SITES = {"quora", "linkedin", "facebook", "google-docs"}
 MIN_CROP_WIDTH = 100
 MIN_CROP_HEIGHT = 100
 PW_RENDERFULLCONTENT = 0x00000002  # required to capture GPU-composited windows (e.g. Chromium)
@@ -380,6 +380,8 @@ def main() -> None:
 
     url = get_address_bar_url(hwnd) if browser in UIA_CAPABLE_BROWSERS else None
     if pagename in SUBPAGE_GATED_SITES and url is not None and has_subpath(url) and not is_subpage_exempt(url):
+        return
+    if is_non_document_google_docs_page(pagename, url):
         return
 
     crop_box = None
