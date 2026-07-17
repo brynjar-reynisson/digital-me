@@ -238,6 +238,13 @@ def is_subpage_exempt(url: str) -> bool:
     return bool(LINKEDIN_FEED_PATTERN.search(url)) or bool(QUORA_TOPIC_PATTERN.search(url))
 
 
+GOOGLE_DOCS_DOCUMENT_PATTERN = re.compile(r"docs\.google\.com/document/d/")
+
+
+def is_non_document_google_docs_page(pagename: str, url: str | None) -> bool:
+    return pagename == "google-docs" and url is not None and not GOOGLE_DOCS_DOCUMENT_PATTERN.search(url)
+
+
 def load_state() -> dict:
     if STATE_FILE.exists():
         try:

@@ -197,6 +197,26 @@ def test_is_subpage_exempt_quora_question_not_exempt():
 def test_is_subpage_exempt_neither_site():
     assert is_subpage_exempt("https://www.facebook.com/topic/") is False
 
+GOOGLE_DOCS_DOCUMENT_PATTERN = re.compile(r"docs\.google\.com/document/d/")
+
+def is_non_document_google_docs_page(pagename: str, url: str) -> bool:
+    return pagename == "google-docs" and url is not None and not GOOGLE_DOCS_DOCUMENT_PATTERN.search(url)
+
+def test_is_non_document_google_docs_page_open_document_not_skipped():
+    assert is_non_document_google_docs_page("google-docs", "https://docs.google.com/document/d/abc123/edit") is False
+
+def test_is_non_document_google_docs_page_homepage_is_skipped():
+    assert is_non_document_google_docs_page("google-docs", "https://docs.google.com/document/u/0/") is True
+
+def test_is_non_document_google_docs_page_root_is_skipped():
+    assert is_non_document_google_docs_page("google-docs", "https://docs.google.com/") is True
+
+def test_is_non_document_google_docs_page_no_url_falls_back_to_capture():
+    assert is_non_document_google_docs_page("google-docs", None) is False
+
+def test_is_non_document_google_docs_page_other_site_not_affected():
+    assert is_non_document_google_docs_page("linkedin", "https://www.linkedin.com/") is False
+
 def test_find_gap_threshold_real_data_picks_first_gap_not_largest():
     lefts = [91.0, 101.0, 106.0, 133.0, 134.0, 281.0, 282.0, 337.0, 345.0, 388.0,
               573.0, 615.0, 627.0, 874.0, 967.0, 1060.0, 1305.0]
@@ -516,6 +536,11 @@ if __name__ == "__main__":
     test_is_subpage_exempt_quora_topic_nested()
     test_is_subpage_exempt_quora_question_not_exempt()
     test_is_subpage_exempt_neither_site()
+    test_is_non_document_google_docs_page_open_document_not_skipped()
+    test_is_non_document_google_docs_page_homepage_is_skipped()
+    test_is_non_document_google_docs_page_root_is_skipped()
+    test_is_non_document_google_docs_page_no_url_falls_back_to_capture()
+    test_is_non_document_google_docs_page_other_site_not_affected()
     test_find_gap_threshold_real_data_picks_first_gap_not_largest()
     test_find_gap_threshold_too_few_lines()
     test_find_gap_threshold_no_qualifying_gap()
