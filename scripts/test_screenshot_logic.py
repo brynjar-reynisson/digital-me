@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image
 
 # Inline the two pure functions so this file has no external imports
-SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
+SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora", "google docs": "google-docs"}
 # Order matters: "chrome" must precede "edge" so titles like "...share knowledge -
 # Google Chrome" match "chrome" first, since "knowledge" itself contains "edge".
 BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
@@ -138,6 +138,16 @@ def test_detect_microsoft_edge():
     pagename, browser, _ = detect_site("Feed | LinkedIn - Microsoft Edge")
     assert pagename == "linkedin"
     assert browser == "edge"
+
+def test_detect_google_docs_open_document():
+    pagename, browser, _ = detect_site("Quarterly Report - Google Docs - Google Chrome")
+    assert pagename == "google-docs"
+    assert browser == "chrome"
+
+def test_detect_google_docs_homepage():
+    pagename, browser, _ = detect_site("Google Docs - Google Chrome")
+    assert pagename == "google-docs"
+    assert browser == "chrome"
 
 def test_hash_deterministic():
     assert hash_bytes(b"hello") == hash_bytes(b"hello")
@@ -488,6 +498,8 @@ if __name__ == "__main__":
     test_detect_ignores_notepad()
     test_detect_ignores_explorer()
     test_detect_microsoft_edge()
+    test_detect_google_docs_open_document()
+    test_detect_google_docs_homepage()
     test_hash_deterministic()
     test_hash_distinct()
     test_has_subpath_root_with_slash()

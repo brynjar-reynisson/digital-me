@@ -16,7 +16,7 @@ from pytesseract import Output
 
 STATE_FILE = Path(__file__).parent / "screenshot-capture-state.json"
 DIGITAL_ME_URL = "http://localhost:8080/addContent"
-SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora"}
+SITE_KEYWORDS = {"linkedin": "linkedin", "facebook": "facebook", "quora": "quora", "google docs": "google-docs"}
 # Order matters: "chrome" must precede "edge" so titles like "...share knowledge -
 # Google Chrome" match "chrome" first, since "knowledge" itself contains "edge".
 BROWSER_KEYWORDS = ("chrome", "edge", "firefox", "opera", "brave")
