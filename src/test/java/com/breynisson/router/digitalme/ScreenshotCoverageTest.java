@@ -61,4 +61,14 @@ class ScreenshotCoverageTest {
     void untrackedDomainIsNotCovered() {
         assertFalse(ScreenshotCoverage.isCovered("https://www.example.com/"));
     }
+
+    @Test
+    void googleDocsDocumentIsCovered() {
+        assertTrue(ScreenshotCoverage.isCovered("https://docs.google.com/document/d/abc123/edit"));
+    }
+
+    @Test
+    void googleDocsHomepageIsCovered() {
+        assertTrue(ScreenshotCoverage.isCovered("https://docs.google.com/"));
+    }
 }

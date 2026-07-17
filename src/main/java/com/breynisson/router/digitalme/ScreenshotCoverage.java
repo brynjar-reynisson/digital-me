@@ -16,6 +16,9 @@ public final class ScreenshotCoverage {
         if (url.contains("facebook.com")) {
             return true;
         }
+        if (url.contains("docs.google.com")) {
+            return true;
+        }
         if (url.contains("linkedin.com")) {
             return !hasSubpath(url, "linkedin.com/") || LINKEDIN_FEED_PATTERN.matcher(url).find();
         }
