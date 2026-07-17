@@ -522,6 +522,7 @@ class DefaultDigitalMeStorageTest {
         assertEquals(1, filesAfterFirst.size());
         String reportContent = java.nio.file.Files.readString(filesAfterFirst.get(0));
         assertTrue(reportContent.contains("https://www.visir.is"));
+        assertTrue(reportContent.contains("https://www.visir.is/g/111/team-wins-championship"));
         assertTrue(reportContent.contains("VisirPageHandler"));
         assertTrue(reportContent.contains("Falling back to default jsoup handling"));
 

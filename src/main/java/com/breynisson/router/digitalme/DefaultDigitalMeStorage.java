@@ -97,10 +97,9 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
     }
 
     private void reportLayoutChange(PageHandler pageHandler, String source) {
-        String domain = extractDomain(source);
         String message = String.format(
-                "%s has changed the layout, so %s can't find the main content. Falling back to default jsoup handling.",
-                domain, pageHandler.getClass().getSimpleName());
+                "%s has changed the layout, so %s can't find the main content on %s. Falling back to default jsoup handling.",
+                extractDomain(source), pageHandler.getClass().getSimpleName(), source);
         layoutChangeReporter.report(pageHandler.siteName(), message);
     }
 
