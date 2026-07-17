@@ -1,19 +1,28 @@
 package com.breynisson.router.jdbc;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
-import java.io.File;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class ApplicationMetadataDaoTest {
 
+    @TempDir
+    static Path dbDir;
+
     @BeforeAll
     static void setUp() {
-        new File("digital-me-unit-tests").mkdirs();
-        DatabaseAdapter.setDefaultDatabasePath("./digital-me-unit-tests/digital-me.db");
+        DatabaseAdapter.setDefaultDatabasePath(dbDir.resolve("digital-me.db").toString());
         DatabaseAdapter.init();
+    }
+
+    @AfterAll
+    static void tearDown() {
+        DatabaseAdapter.setDefaultDatabasePath(null);
     }
 
     @Test

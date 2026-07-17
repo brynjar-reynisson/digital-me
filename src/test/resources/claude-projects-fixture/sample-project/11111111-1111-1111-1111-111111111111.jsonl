@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-07-10T10:00:00Z","isSidechain":false,"message":{"content":"Hello, can you help me plan a trip to Iceland?"}}
+{"type":"assistant","timestamp":"2026-07-10T10:00:05Z","isSidechain":false,"message":{"id":"msg_abc123","content":[{"type":"text","text":"Sure! Iceland in July is a great time to visit the Blue Lagoon and the Golden Circle."}]}}

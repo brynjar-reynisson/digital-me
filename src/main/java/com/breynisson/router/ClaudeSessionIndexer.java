@@ -34,21 +34,24 @@ import java.util.stream.Stream;
 public class ClaudeSessionIndexer {
 
     private static final Logger log = LoggerFactory.getLogger(ClaudeSessionIndexer.class);
-    private static final Path CLAUDE_PROJECTS = Path.of(System.getProperty("user.home"), ".claude", "projects");
+    private static final Path DEFAULT_CLAUDE_PROJECTS = Path.of(System.getProperty("user.home"), ".claude", "projects");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final EmbeddingIndex embeddingIndex;
     private final Path mcpResourcesDir;
+    private final Path claudeProjectsDir;
 
-    public ClaudeSessionIndexer(EmbeddingIndex embeddingIndex, @Value("${data.dir:.}") String dataDir) {
+    public ClaudeSessionIndexer(EmbeddingIndex embeddingIndex, @Value("${data.dir:.}") String dataDir,
+            @Value("${claude.projects.dir:}") String claudeProjectsDir) {
         this.embeddingIndex = embeddingIndex;
         this.mcpResourcesDir = Paths.get(dataDir, ResourceReceiver.MCP_RESOURCES_DIR);
+        this.claudeProjectsDir = claudeProjectsDir.isBlank() ? DEFAULT_CLAUDE_PROJECTS : Path.of(claudeProjectsDir);
     }
 
     @Scheduled(fixedDelay = 60_000)
     public void indexAll() {
-        if (!Files.isDirectory(CLAUDE_PROJECTS)) return;
-        try (Stream<Path> walk = Files.walk(CLAUDE_PROJECTS, 2)) {
+        if (!Files.isDirectory(claudeProjectsDir)) return;
+        try (Stream<Path> walk = Files.walk(claudeProjectsDir, 2)) {
             walk.filter(Files::isRegularFile)
                 .filter(p -> p.toString().endsWith(".jsonl"))
                 .forEach(this::indexSession);
