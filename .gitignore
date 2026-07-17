@@ -3,6 +3,7 @@ lucene-index/
 *.db
 *.db.original
 digital-me-dev/
+digital-me-unit-tests/
 .claude/settings.local.json
 .claude/projects/
 .claude/todos.md
