@@ -7,10 +7,13 @@ import com.breynisson.router.digitalme.SearchResponse;
 import com.breynisson.router.digitalme.SearchResult;
 import com.breynisson.router.digitalme.SemanticSearch;
 import com.breynisson.router.jdbc.McpEmbeddingDao;
+import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.mcp.EmbeddingClient;
 import com.breynisson.router.mcp.SummarizeClient;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.view.RedirectView;
 import org.springframework.web.util.HtmlUtils;
 
@@ -97,6 +100,12 @@ public class IndexPage {
      * filePath is normally an actual filesystem path, but search results for synthetic sources
      * (e.g. claude:// Claude Code session URLs) put a non-path source identifier there instead;
      * resolve those via the source-URL index of the mcp-resources file that was indexed for them.
+     *
+     * filePath is caller-supplied (a raw query parameter), so for the plain-path case it must be
+     * constrained to files this app already knows about: it's rejected outright if it looks like a
+     * UNC/network path (Windows would otherwise open an SMB session to an attacker-controlled host
+     * just to read it, leaking NTLM credentials) and otherwise must already be a TEXT_ENTRY the app
+     * itself indexed, rather than trusting the path to point wherever the caller wants.
      */
     private static Path resolveFilePath(String filePath) {
         if (NON_LOCAL_SOURCE_SCHEME.matcher(filePath).find()) {
@@ -104,6 +113,12 @@ public class IndexPage {
             if (!candidates.isEmpty()) {
                 return Paths.get(candidates.iterator().next());
             }
+        }
+        if (filePath.startsWith("\\\\") || filePath.startsWith("//")) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Network paths are not allowed");
+        }
+        if (TextEntryDao.findByName(filePath).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "File is not indexed");
         }
         return Paths.get(filePath);
     }

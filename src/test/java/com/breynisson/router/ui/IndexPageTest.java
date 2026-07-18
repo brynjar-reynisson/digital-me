@@ -7,12 +7,14 @@ import com.breynisson.router.digitalme.SearchResponse;
 import com.breynisson.router.digitalme.TestDigitalMeStorage;
 import com.breynisson.router.jdbc.DatabaseAdapter;
 import com.breynisson.router.jdbc.McpEmbeddingDao;
+import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.jdbc.model.McpEmbedding;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -84,6 +86,7 @@ class IndexPageTest {
     void localFileRendersMarkdownAsHtml() throws IOException {
         Path mdFile = tempDir.resolve("notes.md");
         Files.writeString(mdFile, "# Hello World");
+        TextEntryDao.insert(mdFile.toString(), null);
 
         String html = indexPage.localFile(mdFile.toString());
 
@@ -94,11 +97,26 @@ class IndexPageTest {
     void localFileEscapesPlainTextFile() throws IOException {
         Path txtFile = tempDir.resolve("notes.txt");
         Files.writeString(txtFile, "# Not a heading");
+        TextEntryDao.insert(txtFile.toString(), null);
 
         String html = indexPage.localFile(txtFile.toString());
 
         assertTrue(html.contains("# Not a heading"));
         assertFalse(html.contains("<h1>"));
+    }
+
+    @Test
+    void localFileRejectsPathNotInIndex() throws IOException {
+        Path txtFile = tempDir.resolve("unindexed.txt");
+        Files.writeString(txtFile, "secret content");
+
+        assertThrows(ResponseStatusException.class, () -> indexPage.localFile(txtFile.toString()));
+    }
+
+    @Test
+    void localFileRejectsUncPaths() {
+        assertThrows(ResponseStatusException.class,
+                () -> indexPage.localFile("\\\\attacker.example.com\\share\\file.txt"));
     }
 
     @Test
