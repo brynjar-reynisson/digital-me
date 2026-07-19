@@ -25,8 +25,9 @@ public class AppConfig {
     }
 
     @Bean
-    public DigitalMeStorage digitalMeStorage(EmbeddingIndex embeddingIndex) {
-        return new DefaultDigitalMeStorage(dataDir, embeddingIndex);
+    public DigitalMeStorage digitalMeStorage(EmbeddingIndex embeddingIndex,
+            @Value("${embedding.executor.pool-size:1}") int embeddingPoolSize) {
+        return new DefaultDigitalMeStorage(dataDir, embeddingIndex, embeddingPoolSize);
     }
 
     @Bean
