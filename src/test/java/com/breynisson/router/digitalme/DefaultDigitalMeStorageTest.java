@@ -5,6 +5,7 @@ import com.breynisson.router.jdbc.McpEmbeddingDao;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.jdbc.model.McpEmbedding;
 import com.breynisson.router.lucene.LuceneIndex;
+import com.breynisson.router.mcp.EmbeddingClient;
 import com.breynisson.router.mcp.EmbeddingIndex;
 import com.breynisson.router.mcp.ResourceReceiver;
 import org.junit.jupiter.api.*;
@@ -16,6 +17,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -705,6 +709,81 @@ class DefaultDigitalMeStorageTest {
         assertTrue(storage.search("relocating").results().isEmpty());
 
         cleanupDb("http://unrelated-reddit-seed.com");
+    }
+
+    @Test
+    void embeddingSubmissionsAreLimitedToConfiguredPoolSize() throws Exception {
+        CountDownLatch firstStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        CountDownLatch secondStarted = new CountDownLatch(1);
+        AtomicInteger maxConcurrentEmbeds = new AtomicInteger();
+        AtomicInteger concurrentEmbeds = new AtomicInteger();
+
+        EmbeddingClient client = text -> {
+            int current = concurrentEmbeds.incrementAndGet();
+            maxConcurrentEmbeds.accumulateAndGet(current, Math::max);
+            if (text.contains("content one")) {
+                firstStarted.countDown();
+                awaitQuietly(releaseFirst);
+            } else if (text.contains("content two")) {
+                secondStarted.countDown();
+            }
+            concurrentEmbeds.decrementAndGet();
+            return new float[]{1f, 0f};
+        };
+        DefaultDigitalMeStorage boundedStorage = new DefaultDigitalMeStorage(
+                dataDir.toString(), new EmbeddingIndex(client, dataDir.toString()), 1);
+
+        boundedStorage.addContent(request("http://bounded1.com", "P1", "content one"));
+        boundedStorage.addContent(request("http://bounded2.com", "P2", "content two"));
+
+        assertTrue(firstStarted.await(2, TimeUnit.SECONDS), "first embedding job should start");
+        assertEquals(1, secondStarted.getCount(), "second embedding job must not start while the single worker is busy");
+
+        releaseFirst.countDown();
+
+        assertTrue(secondStarted.await(2, TimeUnit.SECONDS), "second embedding job should run once the first completes");
+        assertEquals(1, maxConcurrentEmbeds.get(), "pool size 1 must never run two embedding jobs concurrently");
+
+        cleanupDb("http://bounded1.com");
+        cleanupDb("http://bounded2.com");
+    }
+
+    @Test
+    void embeddingPoolSizeOfTwoAllowsTwoConcurrentJobs() throws Exception {
+        CountDownLatch bothStarted = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger maxConcurrentEmbeds = new AtomicInteger();
+        AtomicInteger concurrentEmbeds = new AtomicInteger();
+
+        EmbeddingClient client = text -> {
+            int current = concurrentEmbeds.incrementAndGet();
+            maxConcurrentEmbeds.accumulateAndGet(current, Math::max);
+            bothStarted.countDown();
+            awaitQuietly(release);
+            concurrentEmbeds.decrementAndGet();
+            return new float[]{1f, 0f};
+        };
+        DefaultDigitalMeStorage twoWorkerStorage = new DefaultDigitalMeStorage(
+                dataDir.toString(), new EmbeddingIndex(client, dataDir.toString()), 2);
+
+        twoWorkerStorage.addContent(request("http://pool2-a.com", "A", "content a"));
+        twoWorkerStorage.addContent(request("http://pool2-b.com", "B", "content b"));
+
+        assertTrue(bothStarted.await(2, TimeUnit.SECONDS), "both embedding jobs should start concurrently when pool size is 2");
+        assertEquals(2, maxConcurrentEmbeds.get());
+
+        release.countDown();
+        cleanupDb("http://pool2-a.com");
+        cleanupDb("http://pool2-b.com");
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await(2, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static AddContentRequest request(String source, String name, String content) {

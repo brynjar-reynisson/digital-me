@@ -19,7 +19,8 @@ import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -27,16 +28,30 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultDigitalMeStorage.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final int DEFAULT_EMBEDDING_POOL_SIZE = 1;
 
     private final Lock lock = new ReentrantLock();
     private final ResourceReceiver resourceReceiver;
     private final EmbeddingIndex embeddingIndex;
     private final LayoutChangeReporter layoutChangeReporter;
+    private final ExecutorService embeddingExecutor;
 
+    /** Convenience constructor for tests: default embedding worker pool size. */
     public DefaultDigitalMeStorage(String dataDir, EmbeddingIndex embeddingIndex) {
+        this(dataDir, embeddingIndex, DEFAULT_EMBEDDING_POOL_SIZE);
+    }
+
+    public DefaultDigitalMeStorage(String dataDir, EmbeddingIndex embeddingIndex, int embeddingPoolSize) {
         this.resourceReceiver = new ResourceReceiver(dataDir);
         this.embeddingIndex = embeddingIndex;
         this.layoutChangeReporter = new LayoutChangeReporter(dataDir);
+        this.embeddingExecutor = Executors.newFixedThreadPool(embeddingPoolSize, DefaultDigitalMeStorage::newEmbeddingWorkerThread);
+    }
+
+    private static Thread newEmbeddingWorkerThread(Runnable task) {
+        Thread thread = new Thread(task, "embedding-worker");
+        thread.setDaemon(true);
+        return thread;
     }
 
     @Override
@@ -82,7 +97,7 @@ public class DefaultDigitalMeStorage implements DigitalMeStorage {
             }
             resourceReceiver.deleteExistingFor(addContentRequest.getSource());
             Path written = resourceReceiver.addContent(addContentRequest);
-            CompletableFuture.runAsync(() -> embeddingIndex.indexFile(written));
+            embeddingExecutor.submit(() -> embeddingIndex.indexFile(written));
             LuceneIndex.createOrUpdateIndex(content, addContentRequest.getSource(), addContentRequest.getName());
             TextEntryDao.insertOrUpdate(addContentRequest.getSource());
             contentResponse.setSuccess(true);
