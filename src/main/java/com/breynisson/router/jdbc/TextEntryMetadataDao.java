@@ -9,6 +9,10 @@ public class TextEntryMetadataDao {
         DatabaseAdapter.runPreparedStatement("INSERT INTO " + TABLE_NAME + " (TEXT_ENTRY_UUID,KEY,VALUE) VALUES (?,?,?)", uuid, key, value);
     }
 
+    public static void upsert(String uuid, String key, String value) {
+        DatabaseAdapter.runPreparedStatement("INSERT OR REPLACE INTO " + TABLE_NAME + " (TEXT_ENTRY_UUID,KEY,VALUE) VALUES (?,?,?)", uuid, key, value);
+    }
+
     public static String get(String uuid, String key) {
         return DatabaseAdapter.selectOne("SELECT VALUE FROM " + TABLE_NAME + " WHERE TEXT_ENTRY_UUID=? AND KEY=?", DatabaseAdapter.RESULT_SET_STRING_TRANSFORM, uuid, key);
     }
