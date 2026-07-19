@@ -3,6 +3,7 @@ package com.breynisson.router;
 import com.breynisson.router.jdbc.McpEmbeddingDao;
 import com.breynisson.router.jdbc.SummaryCacheDao;
 import com.breynisson.router.jdbc.TextEntryDao;
+import com.breynisson.router.jdbc.TextEntryMetadataDao;
 import com.breynisson.router.jdbc.model.TextEntry;
 import com.breynisson.router.mcp.EmbeddingIndex;
 import com.breynisson.router.mcp.ResourceReceiver;
@@ -20,12 +21,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -36,6 +40,10 @@ public class ClaudeSessionIndexer {
     private static final Logger log = LoggerFactory.getLogger(ClaudeSessionIndexer.class);
     private static final Path DEFAULT_CLAUDE_PROJECTS = Path.of(System.getProperty("user.home"), ".claude", "projects");
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String CONTENT_HASH_KEY = "content-hash";
+    /** A session file still being actively written gets its mtime bumped on nearly every turn;
+     * waiting for it to go quiet avoids re-embedding the whole (possibly multi-MB) transcript every scheduler tick. */
+    private static final long QUIET_PERIOD_MILLIS = 180_000;
 
     private final EmbeddingIndex embeddingIndex;
     private final Path mcpResourcesDir;
@@ -67,6 +75,10 @@ public class ClaudeSessionIndexer {
             String sourceUrl = "claude://" + projectName + "/" + sessionUuid;
 
             long fileModified = jsonlFile.toFile().lastModified();
+            if (System.currentTimeMillis() - fileModified < QUIET_PERIOD_MILLIS) {
+                return; // still being actively written; wait until the session goes quiet
+            }
+
             List<TextEntry> existing = TextEntryDao.findByName(sourceUrl);
             if (!existing.isEmpty() && existing.get(0).instant.getEpochSecond() >= fileModified / 1000) {
                 return;
@@ -74,6 +86,15 @@ public class ClaudeSessionIndexer {
 
             ParsedSession parsed = parseJsonl(jsonlFile);
             if (parsed.content().isBlank()) return;
+
+            String contentHash = sha256Hex(parsed.content());
+            String existingUuid = existing.isEmpty() ? null : existing.get(0).uuid;
+            if (existingUuid != null && contentHash.equals(TextEntryMetadataDao.get(existingUuid, CONTENT_HASH_KEY))) {
+                // Only filtered-out events (e.g. sidechain turns) changed since last index — content is identical,
+                // so bump TIME to the new mtime and skip the re-embed instead of redoing the same work.
+                TextEntryDao.update(new TextEntry(existingUuid, Instant.ofEpochMilli(fileModified), sourceUrl));
+                return;
+            }
 
             LocalDateTime sessionStart = parsed.startTime() != null
                     ? parsed.startTime()
@@ -83,16 +104,26 @@ public class ClaudeSessionIndexer {
             Path resourceFile = writeResourceFile(sourceUrl, projectName, parsed.content(), sessionStart);
             if (resourceFile == null) return;
 
-            if (existing.isEmpty()) {
-                TextEntryDao.insert(sourceUrl, Instant.ofEpochMilli(fileModified));
-            } else {
-                TextEntry e = existing.get(0);
-                TextEntryDao.update(new TextEntry(e.uuid, Instant.ofEpochMilli(fileModified), e.name));
+            String uuid = existingUuid != null
+                    ? existingUuid
+                    : TextEntryDao.insert(sourceUrl, Instant.ofEpochMilli(fileModified));
+            if (existingUuid != null) {
+                TextEntryDao.update(new TextEntry(existingUuid, Instant.ofEpochMilli(fileModified), sourceUrl));
             }
+            TextEntryMetadataDao.upsert(uuid, CONTENT_HASH_KEY, contentHash);
             embeddingIndex.indexFile(resourceFile);
             log.info("Indexed Claude session {} ({})", sessionUuid, projectName);
         } catch (Exception e) {
             log.warn("Error indexing Claude session {}", jsonlFile, e);
+        }
+    }
+
+    private static String sha256Hex(String content) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(content.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
         }
     }
 
