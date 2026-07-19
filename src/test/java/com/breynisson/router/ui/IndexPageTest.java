@@ -5,9 +5,11 @@ import com.breynisson.router.digitalme.AddContentRequests;
 import com.breynisson.router.digitalme.AddContentResponse;
 import com.breynisson.router.digitalme.SearchResponse;
 import com.breynisson.router.digitalme.TestDigitalMeStorage;
+import com.breynisson.router.jdbc.AddContentQueueDao;
 import com.breynisson.router.jdbc.DatabaseAdapter;
 import com.breynisson.router.jdbc.McpEmbeddingDao;
 import com.breynisson.router.jdbc.TextEntryDao;
+import com.breynisson.router.jdbc.model.AddContentQueueEntry;
 import com.breynisson.router.jdbc.model.McpEmbedding;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -20,6 +22,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -75,11 +78,19 @@ class IndexPageTest {
     }
 
     @Test
-    void addContentDelegatesToStorage() {
+    void addContentQueuesRequestInsteadOfProcessingSynchronously() throws Exception {
         AddContentResponse response = indexPage.addContent(request("http://example.com", "Example", "some content"));
 
         assertTrue(response.isSuccess());
-        assertEquals(1, indexPage.search("some content").results().size());
+        List<AddContentQueueEntry> entries = AddContentQueueDao.findAllOrderedByReceivedAt();
+        AddContentQueueEntry entry = entries.stream()
+                .filter(e -> e.payload.contains("http://example.com"))
+                .findFirst().orElseThrow();
+        assertTrue(entry.payload.contains("some content"));
+        // Not processed synchronously: TestDigitalMeStorage never saw this request, so it's not searchable yet.
+        assertTrue(indexPage.search("some content").results().isEmpty());
+
+        AddContentQueueDao.delete(entry.uuid);
     }
 
     @Test

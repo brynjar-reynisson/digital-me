@@ -6,10 +6,13 @@ import com.breynisson.router.digitalme.DigitalMeStorage;
 import com.breynisson.router.digitalme.SearchResponse;
 import com.breynisson.router.digitalme.SearchResult;
 import com.breynisson.router.digitalme.SemanticSearch;
+import com.breynisson.router.jdbc.AddContentQueueDao;
 import com.breynisson.router.jdbc.McpEmbeddingDao;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.mcp.EmbeddingClient;
 import com.breynisson.router.mcp.SummarizeClient;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -31,6 +34,7 @@ import java.util.regex.Pattern;
 public class IndexPage {
 
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(IndexPage.class);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final DigitalMeStorage storage;
     private final SemanticSearch semanticSearch;
     private final EmbeddingClient embeddingClient;
@@ -124,7 +128,10 @@ public class IndexPage {
     }
 
     @PostMapping(value="/addContent", consumes = "application/json", produces = "application/json")
-    public AddContentResponse addContent(@RequestBody AddContentRequest addContentRequest) {
-        return storage.addContent(addContentRequest);
+    public AddContentResponse addContent(@RequestBody AddContentRequest addContentRequest) throws JsonProcessingException {
+        AddContentQueueDao.insert(OBJECT_MAPPER.writeValueAsString(addContentRequest));
+        AddContentResponse response = new AddContentResponse();
+        response.setSuccess(true);
+        return response;
     }
 }
