@@ -53,19 +53,19 @@ class TranscriptListExtractor {
     private void verifyPlayabilityStatus(String videoId, JsonNode playabilityStatusJson) throws TranscriptRetrievalException {
         String status = playabilityStatusJson.get("status").asText();
 
-        if (status != null && !status.isBlank() && !status.equals("OK")) {
+        if (status != null && !status.isBlank() && !"OK".equals(status)) {
 
             String reason = playabilityStatusJson.get("reason").asText();
-            if (status.equals("LOGIN_REQUIRED")) {
-                if (reason.equals("Sign in to confirm you’re not a bot")) {
+            if ("LOGIN_REQUIRED".equals(status)) {
+                if ("Sign in to confirm you’re not a bot".equals(reason)) {
                     throw new TranscriptRetrievalException(videoId, "YouTube is blocking requests from your ip because it thinks you are a bot");
                 }
-                if (reason.equals("This video may be inappropriate for some users.")) {
+                if ("This video may be inappropriate for some users.".equals(reason)) {
                     throw new TranscriptRetrievalException(videoId, "Video is age restricted");
                 }
             }
 
-            if (status.equals("ERROR") && reason.equals("This video is unavailable")) {
+            if ("ERROR".equals(status) && "This video is unavailable".equals(reason)) {
                 throw new TranscriptRetrievalException(videoId, reason);
             }
 
