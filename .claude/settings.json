@@ -1,4 +1,27 @@
 {
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Lenovo/DigitalMe/**)",
+      "Read(//c/Users/Lenovo/.claude/plugins/cache/claude-plugins-official/superpowers/6.1.1/skills/subagent-driven-development/scripts/**)",
+      "Read(//tmp/**)",
+      "Read(//c/Program Files \\(x86\\)/Microsoft/Edge/Application/**)",
+      "Read(//c/Program Files/Mozilla Firefox/**)",
+      "Read(//c/Program Files \\(x86\\)/Mozilla Firefox/**)",
+      "WebSearch",
+      "WebFetch(domain:www.dv.is)",
+      "WebFetch(domain:www.visir.is)",
+      "WebFetch(domain:fotbolti.net)",
+      "WebFetch(domain:www.reddit.com)",
+      "WebFetch(domain:repo1.maven.org)",
+      "WebFetch(domain:mvnrepository.com)",
+      "WebFetch(domain:central.sonatype.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Skill(simplify)",
+      "Skill(browser-screenshot-ocr)",
+      "Skill(build-and-deploy)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {
