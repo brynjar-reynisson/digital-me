@@ -37,7 +37,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 ### `FileChangeWatcher`
 - Indexes `.txt`, `.md`, and `.pdf` files (other extensions are ignored). PDF content is extracted via PDFBox's `PDFTextStripper`; `.txt` and `.md` are read as plain text
 - Path with `/*` suffix triggers recursive subdirectory scanning (one level deep, then recurses)
-- Compares file `lastModified` vs. DB `TIME` to skip unchanged files
+- Compares file `lastModified` vs. DB `TIME` to skip unchanged files. `watchDirectory(path)` loads the entire `TEXT_ENTRY` table into an in-memory `Map<name, TIME>` once via `TextEntryDao.findAllNameToTime()`, then reuses that map for every file in the (possibly recursive) scan — a per-file `findByName()` DB round trip here previously pegged a CPU core once a watched tree (e.g. an Obsidian vault) grew into the thousands of files, since `scheduler:file-change-watcher` reruns the full scan every 5 seconds indefinitely
 - On new/changed file: calls `LuceneIndex.createOrUpdateIndex()` + `TextEntryDao.insert/update()`
 
 ### `LuceneIndex` (static utility class)
@@ -58,6 +58,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 ### `TextEntryDao`
 - `NAME` column stores the file absolute path or URL (`source`)
 - `findByName(source)` is used to check if an entry exists before insert vs. update
+- `findAllNameToTime()` — one `SELECT * FROM TEXT_ENTRY`, returns `Map<String, Instant>` (`NAME` → `TIME`); used by `FileChangeWatcher` to batch-load known entries once per directory scan instead of querying per file
 
 ### `AddContentQueueDao`
 - `insert(payloadJson)` — inserts a new row with a generated UUID and `RECEIVED_AT` set to now, returns the UUID

@@ -3,7 +3,6 @@ package com.breynisson.router;
 import com.breynisson.router.digitalme.AddContentRequest;
 import com.breynisson.router.digitalme.DigitalMeStorage;
 import com.breynisson.router.jdbc.TextEntryDao;
-import com.breynisson.router.jdbc.model.TextEntry;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -16,7 +15,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.List;
+import java.time.Instant;
+import java.util.Map;
 import java.util.stream.Stream;
 
 public class FileChangeWatcher {
@@ -30,15 +30,19 @@ public class FileChangeWatcher {
     }
 
     public void watchDirectory(String directoryPath) throws IOException {
+        watchDirectory(directoryPath, TextEntryDao.findAllNameToTime());
+    }
+
+    private void watchDirectory(String directoryPath, Map<String, Instant> knownEntries) throws IOException {
 
         if (directoryPath.endsWith("/*")) {
             String baseDir = directoryPath.substring(0, directoryPath.length() - 2);
-            watchDirectory(baseDir);
+            watchDirectory(baseDir, knownEntries);
             try (Stream<Path> subDirs = Files.list(Paths.get(baseDir))) {
                 subDirs.filter(p -> p.toFile().isDirectory())
                        .forEach(p -> {
                            try {
-                               watchDirectory(p + "/*");
+                               watchDirectory(p + "/*", knownEntries);
                            } catch (IOException e) {
                                log.error("Error watching directory {}", p, e);
                            }
@@ -55,10 +59,9 @@ public class FileChangeWatcher {
                 if (name.endsWith(".txt") || name.endsWith(".md") || name.endsWith(".pdf")) {
                     try {
                         String source = file.getAbsolutePath();
-                        List<TextEntry> textEntries = TextEntryDao.findByName(source);
-                        boolean isNew = textEntries.isEmpty();
-                        boolean isModified = !isNew &&
-                                textEntries.get(0).instant.getEpochSecond() < file.lastModified() / 1000;
+                        Instant knownTime = knownEntries.get(source);
+                        boolean isNew = knownTime == null;
+                        boolean isModified = !isNew && knownTime.getEpochSecond() < file.lastModified() / 1000;
                         if (isNew || isModified) {
                             updateFileInfo(file);
                         }

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -51,5 +52,24 @@ class TextEntryDaoTest {
         assertEquals(value, actualValue);
 
         TextEntryDao.delete(uuid);
+    }
+
+    @Test
+    void findAllNameToTimeReturnsEveryEntryInOneCall() {
+        // given
+        Instant instantA = Instant.now().minusSeconds(60);
+        Instant instantB = Instant.now();
+        String uuidA = TextEntryDao.insert("nameA", instantA);
+        String uuidB = TextEntryDao.insert("nameB", instantB);
+
+        // when
+        Map<String, Instant> nameToTime = TextEntryDao.findAllNameToTime();
+
+        // then
+        assertEquals(instantA, nameToTime.get("nameA"));
+        assertEquals(instantB, nameToTime.get("nameB"));
+
+        TextEntryDao.delete(uuidA);
+        TextEntryDao.delete(uuidB);
     }
 }

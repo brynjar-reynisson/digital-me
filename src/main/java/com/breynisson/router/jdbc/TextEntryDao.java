@@ -3,7 +3,9 @@ package com.breynisson.router.jdbc;
 import com.breynisson.router.jdbc.model.TextEntry;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public class TextEntryDao {
@@ -31,6 +33,14 @@ public class TextEntryDao {
 
     public static List<TextEntry> findByName(String name) {
         return DatabaseAdapter.selectList("SELECT * FROM " + TABLE_NAME + " WHERE NAME=?", new TextEntry.ResultSetTransform(), name);
+    }
+
+    public static Map<String, Instant> findAllNameToTime() {
+        Map<String, Instant> nameToTime = new HashMap<>();
+        for (TextEntry textEntry : DatabaseAdapter.selectList("SELECT * FROM " + TABLE_NAME, new TextEntry.ResultSetTransform())) {
+            nameToTime.put(textEntry.name, textEntry.instant);
+        }
+        return nameToTime;
     }
 
     public static void insertOrUpdate(String source) {
