@@ -33,6 +33,14 @@ public class FileChangeWatcher {
         watchDirectory(directoryPath, TextEntryDao.findAllNameToTime());
     }
 
+    // No DB lookup needed: file-watch's content hashing already filters out no-op touches, so the event itself is the change signal.
+    public void handleFileEvent(File file) throws IOException {
+        String name = file.getName().toLowerCase();
+        if (name.endsWith(".txt") || name.endsWith(".md") || name.endsWith(".pdf")) {
+            updateFileInfo(file);
+        }
+    }
+
     private void watchDirectory(String directoryPath, Map<String, Instant> knownEntries) throws IOException {
 
         if (directoryPath.endsWith("/*")) {

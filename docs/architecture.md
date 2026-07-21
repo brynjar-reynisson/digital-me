@@ -26,8 +26,8 @@ camel.springboot.routes-include-pattern = file:./routes/*.xml
 The app must be run with `digital-me-dev/` as the working directory so relative paths resolve correctly. Modifying route files does **not** require a rebuild — restart the JVM.
 
 ### `local-file-changes.xml` (active)
-- `scheduler:file-change-watcher` fires every 5 seconds
-- Calls `FileChangeWatcher.watchDirectory()` for configured paths
+- `local-file-changes-reconcile`: `scheduler:file-change-watcher` fires every 5 minutes and calls `FileChangeWatcher.watchDirectory()` for all configured paths. This is a safety net, not the primary detection path — it catches changes made while the app was down, covers the two `G:/My Drive` paths (deliberately excluded from live watching below), and backstops anything a live watch might miss. It was originally a 5-second poll; slowed to 5 minutes once `watchDirectory()` stopped querying the DB per file (see `FileChangeWatcher` below), since a full walk is now cheap enough to not need sub-minute frequency
+- `local-file-changes-watch-*`: `file-watch://` routes (java.nio.file.WatchService-backed, via `camel-file-watch`) give real-time reindexing for the three local, space-free paths — `C:/Users/Lenovo/Documents` (non-recursive), `C:/Users/Lenovo/Documents/obsidian` (recursive — this is ~99% of the watched file count), and `C:/Users/Lenovo/IdeaProjects/agent-suite/conversations` (recursive). Each routes `CREATE`/`MODIFY` events straight to `FileChangeWatcher.handleFileEvent()`. `G:/My Drive` and `G:/My Drive/diary` are intentionally left off live watching: the path contains a space (`file-watch`'s URI parsing doesn't visibly decode/escape it) and Google Drive's Cloud Filter API doesn't reliably fire standard OS filesystem notifications for cloud-pushed content changes to placeholder files — both watched only via the reconciliation route instead, at 5-minute-not-5-second freshness
 - `file:content-receive` polls the `content-receive/` directory and processes dropped files via `ContentReceive`
 
 ---
@@ -37,7 +37,8 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 ### `FileChangeWatcher`
 - Indexes `.txt`, `.md`, and `.pdf` files (other extensions are ignored). PDF content is extracted via PDFBox's `PDFTextStripper`; `.txt` and `.md` are read as plain text
 - Path with `/*` suffix triggers recursive subdirectory scanning (one level deep, then recurses)
-- Compares file `lastModified` vs. DB `TIME` to skip unchanged files. `watchDirectory(path)` loads the entire `TEXT_ENTRY` table into an in-memory `Map<name, TIME>` once via `TextEntryDao.findAllNameToTime()`, then reuses that map for every file in the (possibly recursive) scan — a per-file `findByName()` DB round trip here previously pegged a CPU core once a watched tree (e.g. an Obsidian vault) grew into the thousands of files, since `scheduler:file-change-watcher` reruns the full scan every 5 seconds indefinitely
+- `watchDirectory(path)` — used by the reconciliation route — compares file `lastModified` vs. DB `TIME` to skip unchanged files. Loads the entire `TEXT_ENTRY` table into an in-memory `Map<name, TIME>` once via `TextEntryDao.findAllNameToTime()`, then reuses that map for every file in the (possibly recursive) scan — a per-file `findByName()` DB round trip here previously pegged a CPU core once a watched tree (e.g. an Obsidian vault) grew into the thousands of files, since the route used to rerun the full scan every 5 seconds indefinitely
+- `handleFileEvent(file)` — used by the `file-watch` routes — always (re)indexes a supported file with no DB lookup first, since the OS-level CREATE/MODIFY event (with `file-watch`'s content hashing already filtering no-op touches) is itself the "this changed" signal
 - On new/changed file: calls `LuceneIndex.createOrUpdateIndex()` + `TextEntryDao.insert/update()`
 
 ### `LuceneIndex` (static utility class)

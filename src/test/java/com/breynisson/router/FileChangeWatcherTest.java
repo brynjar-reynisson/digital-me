@@ -168,4 +168,27 @@ class FileChangeWatcherTest {
 
         cleanupDb(file);
     }
+
+    @Test
+    void handleFileEventIndexesSupportedFile() throws IOException {
+        Path txtFile = tempDir.resolve("event.txt");
+        Files.writeString(txtFile, "event driven content");
+
+        watcher.handleFileEvent(txtFile.toFile());
+
+        assertEquals(1, LuceneIndex.find("event driven").size());
+        assertFalse(TextEntryDao.findByName(txtFile.toAbsolutePath().toString()).isEmpty());
+
+        cleanupDb(txtFile);
+    }
+
+    @Test
+    void handleFileEventIgnoresUnsupportedFile() throws IOException {
+        Path jsonFile = tempDir.resolve("event.json");
+        Files.writeString(jsonFile, "json content");
+
+        watcher.handleFileEvent(jsonFile.toFile());
+
+        assertTrue(TextEntryDao.findByName(jsonFile.toAbsolutePath().toString()).isEmpty());
+    }
 }
