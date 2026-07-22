@@ -11,6 +11,7 @@ import com.breynisson.router.jdbc.McpEmbeddingDao;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.jdbc.model.AddContentQueueEntry;
 import com.breynisson.router.jdbc.model.McpEmbedding;
+import com.breynisson.router.mcp.EmbeddingIndex;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,6 +24,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -57,7 +59,7 @@ class IndexPageTest {
     @BeforeEach
     void setUp() {
         storage = new TestDigitalMeStorage();
-        indexPage = new IndexPage(storage, null, text -> null, text -> null);
+        indexPage = new IndexPage(storage, null, text -> null, text -> null, new EmbeddingIndex(text -> null, tempDir.toString()));
     }
 
     @Test
@@ -75,6 +77,39 @@ class IndexPageTest {
         SearchResponse response = indexPage.search("nonexistent");
 
         assertTrue(response.results().isEmpty());
+    }
+
+    @Test
+    void indexHealthReportsCoverageMetrics() throws IOException {
+        Path mcpResourcesDir = tempDir.resolve("mcp-resources");
+        Files.createDirectories(mcpResourcesDir);
+        Path indexedFile = mcpResourcesDir.resolve("indexed.txt");
+        Files.writeString(indexedFile, "source-indexed\ncontent");
+        Files.writeString(mcpResourcesDir.resolve("unindexed.txt"), "source-unindexed\ncontent");
+        McpEmbeddingDao.upsert(new McpEmbedding(indexedFile.toAbsolutePath().toString(), 0, "source-indexed",
+                "content", embeddingBytes(), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+
+        try {
+            Map<String, Object> health = indexPage.indexHealth();
+
+            assertEquals(1, health.get("indexedFiles"));
+            assertEquals(1, health.get("totalChunks"));
+            assertEquals(2, health.get("totalFilesOnDisk"));
+            assertEquals(50.0, health.get("coveragePercent"));
+        } finally {
+            McpEmbeddingDao.deleteByFilePath(indexedFile.toAbsolutePath().toString());
+        }
+    }
+
+    @Test
+    void indexHealthReturns100PercentWhenNoFilesOnDisk() {
+        IndexPage page = new IndexPage(storage, null, text -> null, text -> null,
+                new EmbeddingIndex(text -> null, tempDir.resolve("empty").toString()));
+
+        Map<String, Object> health = page.indexHealth();
+
+        assertEquals(0, health.get("totalFilesOnDisk"));
+        assertEquals(100.0, health.get("coveragePercent"));
     }
 
     @Test

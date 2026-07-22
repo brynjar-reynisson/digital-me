@@ -10,6 +10,7 @@ import com.breynisson.router.jdbc.AddContentQueueDao;
 import com.breynisson.router.jdbc.McpEmbeddingDao;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.mcp.EmbeddingClient;
+import com.breynisson.router.mcp.EmbeddingIndex;
 import com.breynisson.router.mcp.SummarizeClient;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,12 +40,14 @@ public class IndexPage {
     private final SemanticSearch semanticSearch;
     private final EmbeddingClient embeddingClient;
     private final SummarizeClient summarizeClient;
+    private final EmbeddingIndex embeddingIndex;
 
-    public IndexPage(DigitalMeStorage storage, SemanticSearch semanticSearch, EmbeddingClient embeddingClient, SummarizeClient summarizeClient) {
+    public IndexPage(DigitalMeStorage storage, SemanticSearch semanticSearch, EmbeddingClient embeddingClient, SummarizeClient summarizeClient, EmbeddingIndex embeddingIndex) {
         this.storage = storage;
         this.semanticSearch = semanticSearch;
         this.embeddingClient = embeddingClient;
         this.summarizeClient = summarizeClient;
+        this.embeddingIndex = embeddingIndex;
     }
 
     @GetMapping("/")
@@ -60,6 +63,23 @@ public class IndexPage {
             "online", embeddingAvailable || summarizeAvailable,
             "embedding", embeddingAvailable,
             "summarize", summarizeAvailable
+        );
+    }
+
+    @GetMapping("/health/index")
+    public Map<String, Object> indexHealth() {
+        int indexedFiles = McpEmbeddingDao.countIndexedFiles();
+        int totalChunks = McpEmbeddingDao.countTotalChunks();
+        int totalFilesOnDisk = embeddingIndex.countFilesOnDisk();
+        double coveragePercent = totalFilesOnDisk > 0
+                ? Math.round(indexedFiles * 1000.0 / totalFilesOnDisk) / 10.0
+                : 100.0;
+
+        return Map.of(
+                "indexedFiles", indexedFiles,
+                "totalChunks", totalChunks,
+                "totalFilesOnDisk", totalFilesOnDisk,
+                "coveragePercent", coveragePercent
         );
     }
 

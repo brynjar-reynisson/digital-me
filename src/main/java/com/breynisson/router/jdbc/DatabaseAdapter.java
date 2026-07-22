@@ -14,6 +14,7 @@ import java.util.*;
 public class DatabaseAdapter {
 
     public static ResultSetStringTransform RESULT_SET_STRING_TRANSFORM = new ResultSetStringTransform();
+    public static ResultSetIntTransform RESULT_SET_INT_TRANSFORM = new ResultSetIntTransform();
     private static String defaultDatabasePath = getDefaultDatabasePath();
 
     private static String getDefaultDatabasePath() {
@@ -96,6 +97,18 @@ public class DatabaseAdapter {
             List<String> list = new ArrayList<>();
             while(rset.next()) {
                 list.add(rset.getString(1));
+            }
+            return list;
+        }
+    }
+
+    public static class ResultSetIntTransform implements ResultSetTransform<Integer> {
+
+        @Override
+        public List<Integer> transform(ResultSet rset) throws SQLException {
+            List<Integer> list = new ArrayList<>();
+            while(rset.next()) {
+                list.add(rset.getInt(1));
             }
             return list;
         }
