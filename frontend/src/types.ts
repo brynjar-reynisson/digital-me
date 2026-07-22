@@ -14,3 +14,16 @@ export interface SearchResponse {
 export interface SummarizeResponse {
   summary: string
 }
+
+export interface OllamaStatus {
+  online: boolean
+  embedding: boolean
+  summarize: boolean
+}
+
+export interface IndexHealth {
+  indexedFiles: number
+  totalChunks: number
+  totalFilesOnDisk: number
+  coveragePercent: number
+}

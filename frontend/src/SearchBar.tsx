@@ -1,19 +1,15 @@
 import { useState, useEffect } from 'react'
+import { OllamaStatus } from './types'
 
 interface SearchBarProps {
   keywords: string
   setKeywords: (val: string) => void
   onSearch: () => void
+  onInfoClick: () => void
   loading: boolean
 }
 
-interface OllamaStatus {
-  online: boolean
-  embedding: boolean
-  summarize: boolean
-}
-
-export function SearchBar({ keywords, setKeywords, onSearch, loading }: SearchBarProps) {
+export function SearchBar({ keywords, setKeywords, onSearch, onInfoClick, loading }: SearchBarProps) {
   const [status, setStatus] = useState<OllamaStatus | null>(null)
 
   useEffect(() => {
@@ -45,6 +41,15 @@ export function SearchBar({ keywords, setKeywords, onSearch, loading }: SearchBa
       </div>
       <button onClick={onSearch} disabled={loading}>
         {loading ? 'Searching…' : 'Search'}
+      </button>
+      <button
+        className="info-button"
+        onClick={onInfoClick}
+        title="Index health"
+        aria-label="Index health"
+        type="button"
+      >
+        i
       </button>
     </div>
   )

@@ -3,6 +3,7 @@ import './App.css'
 import { SearchResult, SearchResponse, SummarizeResponse } from './types'
 import { SearchBar } from './SearchBar'
 import { ResultSection } from './ResultSection'
+import { IndexInfoModal } from './IndexInfoModal'
 
 const PAGE_SIZE = 10
 const SEMANTIC_PAGE_SIZE = 5
@@ -16,6 +17,7 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [summaries, setSummaries] = useState<Record<string, string | null>>({})
   const [searchId, setSearchId] = useState(0)
+  const [showInfo, setShowInfo] = useState(false)
 
   function fetchSummary(source: string, snippet: string) {
     fetch('/summarize', {
@@ -90,8 +92,11 @@ function App() {
         keywords={keywords}
         setKeywords={setKeywords}
         onSearch={doSearch}
+        onInfoClick={() => setShowInfo(true)}
         loading={loading}
       />
+
+      {showInfo && <IndexInfoModal onClose={() => setShowInfo(false)} />}
 
       {error && <p className="error">Error: {error}</p>}
 
