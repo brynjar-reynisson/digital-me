@@ -47,4 +47,18 @@ public class McpEmbeddingDao {
     public static void deleteByModelNot(String currentModel) {
         DatabaseAdapter.runPreparedStatement("DELETE FROM " + TABLE + " WHERE MODEL <> ?", currentModel);
     }
+
+    public static int countIndexedFiles() {
+        Integer count = DatabaseAdapter.selectOne(
+                "SELECT COUNT(DISTINCT FILE_PATH) FROM " + TABLE,
+                DatabaseAdapter.RESULT_SET_INT_TRANSFORM);
+        return count != null ? count : 0;
+    }
+
+    public static int countTotalChunks() {
+        Integer count = DatabaseAdapter.selectOne(
+                "SELECT COUNT(*) FROM " + TABLE,
+                DatabaseAdapter.RESULT_SET_INT_TRANSFORM);
+        return count != null ? count : 0;
+    }
 }

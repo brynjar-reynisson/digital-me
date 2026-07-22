@@ -96,6 +96,17 @@ public class EmbeddingIndex {
         }
     }
 
+    /** Counts files currently on disk under mcp-resources/. Returns 0 if the directory doesn't exist. */
+    public int countFilesOnDisk() {
+        try {
+            if (!Files.isDirectory(mcpResourcesDir)) return 0;
+            return listFilePaths().size();
+        } catch (IOException e) {
+            log.warn("Could not count files in {}", mcpResourcesDir, e);
+            return 0;
+        }
+    }
+
     private Set<String> listFilePaths() throws IOException {
         Set<String> paths = new HashSet<>();
         try (Stream<Path> walk = Files.walk(mcpResourcesDir)) {
