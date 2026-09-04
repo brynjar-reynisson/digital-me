@@ -48,21 +48,40 @@ untouched — it already lives outside SQLite as its own on-disk index.
 
 ### Configuration (`application.properties`)
 
+The actual local Postgres instance is not a dedicated `digital-me` install —
+it's the Supabase local dev stack's Postgres container (already running,
+serving the `agent-suite` and `soulman` projects via their own schemas —
+`projects_dev`/`projects_prod`/`projects_test` and `memory_dev`/`memory_prod`
+respectively, inside the single shared `postgres` database on Supabase's
+default port `54322`). digital-me follows the same convention: its own
+dedicated schema (`digitalme`) inside that shared database, not a separate
+database of its own.
+
 ```properties
 postgres.host=localhost
-postgres.port=5432
-postgres.database=digitalme
+postgres.port=54322
+postgres.database=postgres
 postgres.user=postgres
 postgres.password=${POSTGRES_PASSWORD:postgres}
+postgres.schema=digitalme
 ```
 
 `postgres.password` resolves from the `POSTGRES_PASSWORD` environment
-variable when set, falling back to the literal `postgres` (the common local
-default) otherwise — so nothing secret needs to be committed, but a fresh
-checkout still works against a stock local install without extra setup.
-Since the app already binds to `127.0.0.1` only and this is a documented
-single-user local tool, a plaintext local default is an accepted trade-off,
-consistent with how Ollama's `localhost:11434` is treated today.
+variable when set, falling back to the literal `postgres` (Supabase CLI's
+own local-dev default, confirmed working) otherwise — so nothing secret
+needs to be committed. Since the app already binds to `127.0.0.1` only and
+this is a documented single-user local tool, a plaintext local default is
+an accepted trade-off, consistent with how Ollama's `localhost:11434` is
+treated today.
+
+pgvector 0.8.0 is available on this instance (confirmed via
+`pg_available_extensions`) but not yet enabled. This shared database
+already has a conventional `extensions` schema (visible via `\dn`, used by
+Supabase's own extensions) — `CREATE EXTENSION IF NOT EXISTS vector SCHEMA
+extensions` installs it there once, and the schema DDL (below) references
+the type as `extensions.vector(...)` / `extensions.vector_cosine_ops`
+explicitly rather than relying on `digitalme` schema's search_path to
+include `extensions`.
 
 ### `DatabaseAdapter` — pooled Postgres connection behind the same facade
 
@@ -72,9 +91,12 @@ so every DAO's calling code is unchanged. Internally:
 
 - The single long-lived SQLite `Connection` field is replaced by a static
   `HikariDataSource`, built once from the `postgres.*` properties (read via
-  a new `DatabaseAdapter.configure(host, port, database, user, password)`
-  called from `SpringBootApplication` at startup, mirroring how
-  `setDefaultDatabasePath()` configures SQLite today).
+  a new `DatabaseAdapter.configure(host, port, database, user, password, schema)`
+  called from `AppConfig` at startup, mirroring how `setDefaultDatabasePath()`
+  configures SQLite today). `configure()` itself runs `CREATE SCHEMA IF NOT
+  EXISTS <schema>` against a bootstrap connection before building the pool,
+  so the same method handles both the app's own `digitalme` schema and each
+  test class's freshly-generated one (see Testing).
 - `getConnection()` now returns `dataSource.getConnection()` — a pooled
   connection, not a shared singleton.
 - **Important behavior change:** because connections are now pooled, every
@@ -83,9 +105,9 @@ so every DAO's calling code is unchanged. Internally:
   to return it to the pool. Today's `safeClose(rset, pstmt)` calls stay, and
   `safeClose(connection)` is added alongside them. (Today's single-Connection
   design deliberately never closes it; that would now exhaust the pool.)
-- `setDefaultDatabasePath(String)` is replaced by a schema-scoped equivalent
-  used by tests (see Testing) that points the same pooled DataSource at a
-  different Postgres schema via `search_path`, rather than a different file.
+- `setDefaultDatabasePath(String)` is replaced entirely by `configure(...)`
+  above — tests call it with a freshly-generated schema name instead of a
+  temp file path (see Testing).
 - `openSqliteConnection` and the `org.sqlite.JDBC` class-loading are removed
   from `DatabaseAdapter`.
 
@@ -96,12 +118,12 @@ so every DAO's calling code is unchanged. Internally:
 `APPLICATION_METADATA.database.version`) is reused unchanged — it already
 just runs whatever SQL text is in each file, split on `;`. The six existing
 scripts are translated to a fresh Postgres-dialect set (a clean numbered
-sequence starting at 1, since a new empty Postgres database has no prior
-version to reconcile against):
+sequence starting at 1, since a newly-created, empty `digitalme` schema has
+no prior version to reconcile against):
 
 ```sql
 -- digital-me-db-1.sql
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vector SCHEMA extensions;
 
 CREATE TABLE APPLICATION_METADATA (
     KEY VARCHAR(1024) PRIMARY KEY NOT NULL,
@@ -126,13 +148,13 @@ CREATE TABLE MCP_EMBEDDING (
     CHUNK_INDEX INTEGER NOT NULL DEFAULT 0,
     SOURCE_URL  TEXT NOT NULL,
     CHUNK_TEXT  TEXT NOT NULL,
-    EMBEDDING   VECTOR(768) NOT NULL,
+    EMBEDDING   extensions.VECTOR(768) NOT NULL,
     MODEL       TEXT NOT NULL,
     INDEXED_AT  TEXT NOT NULL,
     PRIMARY KEY (FILE_PATH, CHUNK_INDEX)
 );
 CREATE INDEX mcp_embedding_hnsw_idx ON MCP_EMBEDDING
-    USING hnsw (EMBEDDING vector_cosine_ops);
+    USING hnsw (EMBEDDING extensions.vector_cosine_ops);
 
 CREATE TABLE SUMMARY_CACHE (
     SOURCE_URL TEXT NOT NULL PRIMARY KEY,
@@ -305,15 +327,14 @@ here, since this is a fresh copy, not a merge).
 public final class PostgresTestSupport {
     public static String createIsolatedSchema(String namePrefix) {
         String schema = namePrefix + "_" + UUID.randomUUID().toString().replace("-", "");
-        DatabaseAdapter.runSql("CREATE SCHEMA " + schema);
-        DatabaseAdapter.setSchema(schema); // sets search_path on the pooled DataSource
+        DatabaseAdapter.configure("localhost", 54322, "postgres", "postgres", PASSWORD, schema);
         DatabaseAdapter.init();
         return schema;
     }
 
     public static void dropSchema(String schema) {
-        DatabaseAdapter.setSchema("public");
-        DatabaseAdapter.runSql("DROP SCHEMA " + schema + " CASCADE");
+        // via a separate bootstrap connection, independent of DatabaseAdapter's pool
+        // DROP SCHEMA IF EXISTS <schema> CASCADE
     }
 }
 ```

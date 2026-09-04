@@ -39,9 +39,17 @@ data into the new schema.
 - Table/column identifiers stay unquoted uppercase in all SQL strings
   (matches existing DAO code unchanged; Postgres folds them to lowercase
   consistently on both write and read).
-- Tests connect to the same local Postgres instance as the running app
-  (`localhost:5432`/`digitalme`), isolated per test class via a dedicated
-  schema — no Testcontainers, no Docker dependency.
+- The real local Postgres instance is Supabase's local dev stack (already
+  running via Docker, serving `agent-suite` and `soulman`'s own schemas) —
+  `127.0.0.1:54322`, database `postgres`, credentials `postgres`/`postgres`
+  (confirmed working). digital-me does not get its own database — it gets
+  its own schema (`digitalme`) inside that shared `postgres` database,
+  matching how `agent-suite` (`projects_dev`/`projects_prod`/`projects_test`)
+  and `soulman` (`memory_dev`/`memory_prod`) already do it there. pgvector
+  0.8.0 is available on this instance but not yet enabled.
+- Tests connect to the same shared instance, isolated per test class via a
+  dedicated, freshly-generated schema (not `digitalme` itself) — no
+  Testcontainers, no Docker dependency of their own.
 - Run `mvn checkstyle:check` after any Java change (also enforced by the
   `PostToolUse` hook) — no unused imports, no `EqualsAvoidNull` violations,
   etc. (`checkstyle.xml`).
@@ -60,7 +68,8 @@ data into the new schema.
 - Produces: Maven dependencies `org.postgresql:postgresql`,
   `com.pgvector:pgvector`, `spring-boot-starter-jdbc` available to all later
   tasks. Config keys `postgres.host`, `postgres.port`, `postgres.database`,
-  `postgres.user`, `postgres.password` available via Spring `@Value`.
+  `postgres.user`, `postgres.password`, `postgres.schema` available via
+  Spring `@Value`.
 
 - [ ] **Step 1: Look up current stable versions of the new dependencies**
 
@@ -106,14 +115,19 @@ line at the top:
 
 ```properties
 # Postgres connection for application storage + pgvector embeddings.
+# This is the Supabase local dev stack's Postgres instance (already running,
+# also serving agent-suite/soulman's own schemas) — not a dedicated
+# digital-me database. digital-me gets its own schema (digitalme) inside
+# the shared "postgres" database, matching how agent-suite/soulman do it.
 # postgres.password resolves from the POSTGRES_PASSWORD env var, falling
-# back to the literal "postgres" (the common local-install default) so
+# back to the literal "postgres" (Supabase CLI's own local-dev default) so
 # nothing secret needs to be committed.
 postgres.host=localhost
-postgres.port=5432
-postgres.database=digitalme
+postgres.port=54322
+postgres.database=postgres
 postgres.user=postgres
 postgres.password=${POSTGRES_PASSWORD:postgres}
+postgres.schema=digitalme
 ```
 
 - [ ] **Step 4: Verify dependency resolution**
@@ -160,7 +174,12 @@ git rm src/main/resources/digital-me-db-2.sql src/main/resources/digital-me-db-3
 Replace the entire file content with:
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS vector;
+-- This shared database (Supabase local dev stack, also serving agent-suite
+-- and soulman) already has a conventional "extensions" schema for exactly
+-- this purpose — install pgvector there once rather than into this
+-- table's own "digitalme" schema, and reference the type schema-qualified
+-- below so it resolves correctly regardless of this schema's search_path.
+CREATE EXTENSION IF NOT EXISTS vector SCHEMA extensions;
 
 CREATE TABLE APPLICATION_METADATA (
     KEY VARCHAR(1024) PRIMARY KEY NOT NULL,
@@ -185,13 +204,13 @@ CREATE TABLE MCP_EMBEDDING (
     CHUNK_INDEX INTEGER NOT NULL DEFAULT 0,
     SOURCE_URL  TEXT NOT NULL,
     CHUNK_TEXT  TEXT NOT NULL,
-    EMBEDDING   VECTOR(768) NOT NULL,
+    EMBEDDING   extensions.VECTOR(768) NOT NULL,
     MODEL       TEXT NOT NULL,
     INDEXED_AT  TEXT NOT NULL,
     PRIMARY KEY (FILE_PATH, CHUNK_INDEX)
 );
 CREATE INDEX mcp_embedding_hnsw_idx ON MCP_EMBEDDING
-    USING hnsw (EMBEDDING vector_cosine_ops);
+    USING hnsw (EMBEDDING extensions.vector_cosine_ops);
 
 CREATE TABLE SUMMARY_CACHE (
     SOURCE_URL TEXT NOT NULL PRIMARY KEY,
@@ -278,11 +297,11 @@ public class DatabaseAdapter {
     public static ResultSetIntTransform RESULT_SET_INT_TRANSFORM = new ResultSetIntTransform();
 
     private static String host = "localhost";
-    private static int port = 5432;
-    private static String database = "digitalme";
+    private static int port = 54322;
+    private static String database = "postgres";
     private static String user = "postgres";
     private static String password = "postgres";
-    private static String schema = "public";
+    private static String schema = "digitalme";
     private static HikariDataSource dataSource;
 
     /** Points DatabaseAdapter at a Postgres instance/schema, creating the schema if it doesn't exist. */
@@ -550,20 +569,21 @@ files — this is expected mid-migration and is resolved by Task 11).
 
 - [ ] **Step 3: Manual smoke test against the real local Postgres instance**
 
-Confirm Postgres is running locally, then run a throwaway check (adjust
-credentials if your local install differs from the `postgres`/`postgres`
-default):
+Confirm the Supabase local dev stack's Postgres container is running
+(`docker ps` should show `supabase_db_agent-suite` mapped to
+`0.0.0.0:54322->5432/tcp`), then run:
 ```
 cmd //c "C:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2023.3.5\plugins\maven\lib\maven3\bin\mvn.cmd" -q compile
 ```
 followed by starting a `jshell` (or a tiny throwaway `main`) that calls:
 ```java
-DatabaseAdapter.configure("localhost", 5432, "digitalme", "postgres", "postgres", "public");
+DatabaseAdapter.configure("localhost", 54322, "postgres", "postgres", "postgres", "digitalme");
 DatabaseAdapter.init();
 ```
-Expected: no exception; connecting with `psql` (or any Postgres client)
-afterward shows all six tables created in the `digitalme` database's
-`public` schema, plus `SELECT * FROM APPLICATION_METADATA` returning
+Expected: no exception; connecting with `psql` (or `docker exec
+supabase_db_agent-suite psql -U postgres -d postgres`) afterward shows all
+six tables created in the shared `postgres` database's new `digitalme`
+schema, plus `SELECT * FROM digitalme.APPLICATION_METADATA` returning
 `database.version = 1`.
 
 - [ ] **Step 4: Commit**
@@ -602,16 +622,17 @@ import java.sql.Statement;
 import java.util.UUID;
 
 /**
- * Test isolation for Postgres: each test class gets its own schema in the shared local
- * "digitalme" database, created fresh and dropped afterward — replacing the old per-test-class
- * SQLite @TempDir file pattern. Requires a local Postgres instance (with pgvector installed)
- * running at localhost:5432 with the default postgres/postgres credentials.
+ * Test isolation for Postgres: each test class gets its own freshly-generated schema in the
+ * shared "postgres" database (the Supabase local dev stack's instance, also used by
+ * agent-suite/soulman), created fresh and dropped afterward — replacing the old per-test-class
+ * SQLite @TempDir file pattern. Requires that instance (with pgvector available) running at
+ * localhost:54322 with the default postgres/postgres credentials.
  */
 public final class PostgresTestSupport {
 
     private static final String HOST = "localhost";
-    private static final int PORT = 5432;
-    private static final String DATABASE = "digitalme";
+    private static final int PORT = 54322;
+    private static final String DATABASE = "postgres";
     private static final String USER = "postgres";
     private static final String PASSWORD = System.getenv().getOrDefault("POSTGRES_PASSWORD", "postgres");
 
@@ -1393,22 +1414,12 @@ git commit -m "test: convert AddContentQueueDaoTest to per-schema Postgres isola
 - Modify: `src/test/java/com/breynisson/router/digitalme/SemanticSearchTest.java`
 - Modify: `src/test/java/com/breynisson/router/mcp/ResourceReceiverTest.java`
 - Modify: `src/test/java/com/breynisson/router/SpringBootApplicationTest.java`
-- Modify: `src/main/resources/application.properties`
 
 **Interfaces:**
-- Consumes: `DatabaseAdapter.configure(host, port, database, user, password, schema)` (Task 3).
-- Produces: `postgres.schema` config key (default `public`) so
-  `@SpringBootTest`-based tests can isolate themselves the same way
-  unit-test classes do via `PostgresTestSupport`.
+- Consumes: `DatabaseAdapter.configure(host, port, database, user, password, schema)`
+  (Task 3), `postgres.schema` config key (added in Task 1, default `digitalme`).
 
-- [ ] **Step 1: Add `postgres.schema` to `application.properties`**
-
-Add to the Postgres block added in Task 1:
-```properties
-postgres.schema=public
-```
-
-- [ ] **Step 2: Rewrite `AppConfig`'s constructor**
+- [ ] **Step 1: Rewrite `AppConfig`'s constructor**
 
 Replace:
 ```java
@@ -1424,11 +1435,11 @@ with:
     public AppConfig(
             @Value("${data.dir:.}") String dataDir,
             @Value("${postgres.host:localhost}") String postgresHost,
-            @Value("${postgres.port:5432}") int postgresPort,
-            @Value("${postgres.database:digitalme}") String postgresDatabase,
+            @Value("${postgres.port:54322}") int postgresPort,
+            @Value("${postgres.database:postgres}") String postgresDatabase,
             @Value("${postgres.user:postgres}") String postgresUser,
             @Value("${postgres.password:postgres}") String postgresPassword,
-            @Value("${postgres.schema:public}") String postgresSchema) {
+            @Value("${postgres.schema:digitalme}") String postgresSchema) {
         this.dataDir = dataDir;
         DatabaseAdapter.configure(postgresHost, postgresPort, postgresDatabase, postgresUser, postgresPassword, postgresSchema);
         LuceneIndex.setIndexPath(dataDir + "/lucene-index");
@@ -1443,7 +1454,7 @@ the placeholder itself. If `application.properties` isn't on the classpath
 at all — never true for the real app, but worth knowing — this default
 covers it.)
 
-- [ ] **Step 3: Convert the six identical-pattern test files**
+- [ ] **Step 2: Convert the six identical-pattern test files**
 
 For each of the following files, apply this exact transformation:
 
@@ -1494,9 +1505,9 @@ Each of these files also has other `@TempDir` fields (e.g. `dataDir`,
 `indexDir`) that are unrelated to the database — those stay exactly as-is;
 only the `dbDir`/`setDefaultDatabasePath` pair is replaced.
 
-- [ ] **Step 4: Convert `ResourceReceiverTest`**
+- [ ] **Step 3: Convert `ResourceReceiverTest`**
 
-Same transformation as Step 3 with prefix `resourcereceiver`, plus update
+Same transformation as Step 2 with prefix `resourcereceiver`, plus update
 its `embeddingBytes()` helper (used to build a `McpEmbedding` for direct
 `McpEmbeddingDao.upsert()` calls in two tests). Replace:
 ```java
@@ -1515,10 +1526,10 @@ with:
 Remove the now-unused `import java.nio.ByteBuffer;` if nothing else in the
 file uses it.
 
-- [ ] **Step 5: Convert `SpringBootApplicationTest`**
+- [ ] **Step 4: Convert `SpringBootApplicationTest`**
 
 This one is different: it's a full `@SpringBootTest`, so `AppConfig`'s
-constructor (Step 2) runs during Spring context startup and reads
+constructor (Step 1) runs during Spring context startup and reads
 `postgres.*` properties from the test's dynamic property registry, not
 from `PostgresTestSupport` directly. Replace:
 ```java
@@ -1563,7 +1574,7 @@ Add `import com.breynisson.router.jdbc.PostgresTestSupport;`. Remove the
 now-unused `import com.breynisson.router.jdbc.DatabaseAdapter;` if nothing
 else in the file references `DatabaseAdapter` directly.
 
-- [ ] **Step 6: Run the full test suite**
+- [ ] **Step 5: Run the full test suite**
 
 ```
 cmd //c "C:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2023.3.5\plugins\maven\lib\maven3\bin\mvn.cmd" -q test
@@ -1571,10 +1582,10 @@ cmd //c "C:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2023.3.5\plu
 Expected: `BUILD SUCCESS`, every test passes. This is the first point the
 entire suite runs green against Postgres end-to-end.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/main/java/com/breynisson/router/AppConfig.java src/main/resources/application.properties src/test/java/com/breynisson/router/ClaudeSessionIndexerTest.java src/test/java/com/breynisson/router/AddContentQueueProcessorTest.java src/test/java/com/breynisson/router/FileChangeWatcherTest.java src/test/java/com/breynisson/router/ui/IndexPageTest.java src/test/java/com/breynisson/router/digitalme/DefaultDigitalMeStorageTest.java src/test/java/com/breynisson/router/digitalme/SemanticSearchTest.java src/test/java/com/breynisson/router/mcp/ResourceReceiverTest.java src/test/java/com/breynisson/router/SpringBootApplicationTest.java
+git add src/main/java/com/breynisson/router/AppConfig.java src/test/java/com/breynisson/router/ClaudeSessionIndexerTest.java src/test/java/com/breynisson/router/AddContentQueueProcessorTest.java src/test/java/com/breynisson/router/FileChangeWatcherTest.java src/test/java/com/breynisson/router/ui/IndexPageTest.java src/test/java/com/breynisson/router/digitalme/DefaultDigitalMeStorageTest.java src/test/java/com/breynisson/router/digitalme/SemanticSearchTest.java src/test/java/com/breynisson/router/mcp/ResourceReceiverTest.java src/test/java/com/breynisson/router/SpringBootApplicationTest.java
 git commit -m "feat: wire AppConfig to configure Postgres on startup; convert remaining tests to per-schema isolation"
 ```
 
@@ -1937,20 +1948,21 @@ Replace the SQLite `@TempDir` convention bullets with:
 ```
 ## Postgres tests
 
-- DB tests connect to a local Postgres instance (`localhost:5432`, database
-  `digitalme`, default `postgres`/`postgres` credentials — override via the
-  `POSTGRES_PASSWORD` env var if your local install differs) — a
-  prerequisite for running `mvn test`, the same way some tests require
-  Ollama running.
+- DB tests connect to the Supabase local dev stack's Postgres instance
+  (`localhost:54322`, database `postgres`, default `postgres`/`postgres`
+  credentials — override via the `POSTGRES_PASSWORD` env var if yours
+  differs) — the same instance `agent-suite` and `soulman` use, each in
+  their own schema. This is a prerequisite for running `mvn test`, the same
+  way some tests require Ollama running.
 - Use `PostgresTestSupport.createIsolatedSchema("<prefix>")` in `@BeforeAll`
   to get a fresh, isolated schema per test class (replaces the old
   per-class SQLite `@TempDir` file); `PostgresTestSupport.dropSchema(schema)`
   in `@AfterAll` to clean up.
-- `pgvector` must be installed as a Postgres extension
-  (`CREATE EXTENSION vector`) — `DatabaseAdapter.init()` runs
-  `CREATE EXTENSION IF NOT EXISTS vector` itself, but the extension's
-  shared library must already be installed on the Postgres server (see
-  `docs/tooling.md`).
+- `pgvector` is installed once into this shared instance's `extensions`
+  schema (`CREATE EXTENSION IF NOT EXISTS vector SCHEMA extensions`, run by
+  `DatabaseAdapter.init()`) — the extension's shared library must already
+  be present on the Postgres server (see `docs/tooling.md`); it was
+  confirmed available (v0.8.0) on this instance.
 ```
 
 - [ ] **Step 4: Update `docs/tooling.md`**
@@ -1960,14 +1972,17 @@ Add a new section:
 ```
 ## Postgres
 
-Local install must include the `pgvector` extension (v0.5.0+, for HNSW
-index support). On Windows, either use the `pgvector` prebuilt binaries for
-your Postgres version, or build from source per the
-[pgvector README](https://github.com/pgvector/pgvector).
+digital-me uses the Supabase local dev stack's Postgres instance (also
+serving `agent-suite` and `soulman`), not a dedicated install of its own —
+it gets its own schema (`digitalme`) inside that shared `postgres`
+database. That instance already has `pgvector` 0.8.0 available (HNSW index
+support requires v0.5.0+); `DatabaseAdapter.init()` enables it once via
+`CREATE EXTENSION IF NOT EXISTS vector SCHEMA extensions`.
 
-Default connection: `localhost:5432`, database `digitalme`, user `postgres`.
-Password resolves from the `POSTGRES_PASSWORD` environment variable,
-falling back to the literal `postgres` otherwise.
+Default connection: `localhost:54322`, database `postgres`, schema
+`digitalme`, user `postgres`. Password resolves from the
+`POSTGRES_PASSWORD` environment variable, falling back to the literal
+`postgres` (Supabase CLI's own local-dev default) otherwise.
 
 ## One-time SQLite-to-Postgres migration
 
