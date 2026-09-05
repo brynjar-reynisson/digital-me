@@ -1,6 +1,5 @@
 package com.breynisson.router;
 
-import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 
 // DataSourceAutoConfiguration is excluded because DatabaseAdapter manages its own HikariCP
@@ -16,7 +15,14 @@ public class SpringBootApplication {
      * A main method to start this application.
      */
     public static void main(String[] args) {
-        SpringApplication.run(SpringBootApplication.class, args);
+        org.springframework.boot.builder.SpringApplicationBuilder builder =
+                new org.springframework.boot.builder.SpringApplicationBuilder(SpringBootApplication.class);
+        boolean migrating = java.util.Arrays.stream(args)
+                .anyMatch(a -> a.startsWith("--digitalme.migrate-sqlite-path"));
+        if (migrating) {
+            builder.web(org.springframework.boot.WebApplicationType.NONE);
+        }
+        builder.run(args);
     }
 
 }
