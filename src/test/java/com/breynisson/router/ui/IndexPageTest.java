@@ -6,8 +6,8 @@ import com.breynisson.router.digitalme.AddContentResponse;
 import com.breynisson.router.digitalme.SearchResponse;
 import com.breynisson.router.digitalme.TestDigitalMeStorage;
 import com.breynisson.router.jdbc.AddContentQueueDao;
-import com.breynisson.router.jdbc.DatabaseAdapter;
 import com.breynisson.router.jdbc.McpEmbeddingDao;
+import com.breynisson.router.jdbc.PostgresTestSupport;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.jdbc.model.AddContentQueueEntry;
 import com.breynisson.router.jdbc.model.McpEmbedding;
@@ -20,7 +20,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -36,24 +35,30 @@ class IndexPageTest {
     @TempDir
     Path tempDir;
 
-    @TempDir
-    static Path dbDir;
+    static String schema;
 
     @BeforeAll
     static void setUpDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(dbDir.resolve("test.db").toString());
-        DatabaseAdapter.init();
+        schema = PostgresTestSupport.createIsolatedSchema("indexpage");
     }
 
     @AfterAll
     static void tearDownDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(null);
+        PostgresTestSupport.dropSchema(schema);
     }
 
-    private static byte[] embeddingBytes() {
-        ByteBuffer buf = ByteBuffer.allocate(Float.BYTES);
-        buf.putFloat(1.0f);
-        return buf.array();
+    /**
+     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(768) NOT NULL (digital-me-db-1.sql) and
+     * pgvector enforces that exact dimension on insert. The test vector below is zero-padded to 768
+     * dims so inserts succeed; zero-padding doesn't change what any test in this file asserts, since
+     * these embeddings are never used in a similarity comparison here.
+     */
+    private static final int DIMENSIONS = 768;
+
+    private static float[] embeddingBytes() {
+        float[] padded = new float[DIMENSIONS];
+        padded[0] = 1.0f;
+        return padded;
     }
 
     @BeforeEach

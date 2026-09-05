@@ -19,7 +19,7 @@ Personal search engine that indexes local `.txt` files and web pages visited via
 | Web server | Undertow (Tomcat explicitly excluded in pom.xml) |
 | Full-text search | Apache Lucene (via camel-lucene-starter) |
 | Semantic search | Ollama local AI (`nomic-embed-text` model, 2048-token context) |
-| Database | SQLite via `sqlite-jdbc` |
+| Database | PostgreSQL + `pgvector` (via `org.postgresql:postgresql`, pooled with HikariCP) |
 | HTML parsing | Jsoup |
 | Frontend | React 19, Vite 7, TypeScript 5 (strict) |
 | Browser extension | Chrome/Edge Manifest V3 |
@@ -39,8 +39,7 @@ digital-me/
 │   │   └── local-file-changes.xml            Active: file watcher + content-receive
 │   ├── lucene-index/         Lucene index files
 │   ├── content-receive/      Drop files here to trigger ContentReceive route
-│   ├── mcp-resources/        Files saved by MCP clients (year-month subdirs)
-│   └── digital-me.db         SQLite database
+│   └── mcp-resources/        Files saved by MCP clients (year-month subdirs)
 ├── docs/                     Detailed documentation (imported below)
 ├── frontend/                 React + Vite search UI
 │   └── src/
@@ -52,12 +51,14 @@ digital-me/
 │   ├── FileChangeWatcher.java       Watches dirs, indexes changed .txt files
 │   ├── ContentReceive.java          Camel processor for file:content-receive route
 │   ├── jdbc/
-│   │   ├── DatabaseAdapter.java     SQLite connection + migration runner
+│   │   ├── DatabaseAdapter.java     Postgres connection pool (HikariCP) + schema management
 │   │   ├── TextEntryDao.java        CRUD for TEXT_ENTRY table
 │   │   ├── TextEntryMetadataDao.java
 │   │   ├── ApplicationMetadataDao.java
-│   │   ├── McpEmbeddingDao.java     CRUD for MCP_EMBEDDING table
+│   │   ├── McpEmbeddingDao.java     pgvector queries with DISTINCT ON + scoring
 │   │   └── model/                  TextEntry, TextEntryMetadata, McpEmbedding POJOs
+│   ├── migration/
+│   │   └── SqliteToPostgresMigrator.java One-time migration from legacy SQLite data
 │   ├── lucene/
 │   │   └── LuceneIndex.java         Static Lucene index helpers
 │   ├── mcp/
@@ -65,11 +66,11 @@ digital-me/
 │   │   ├── ResourceReceiver.java    Writes MCP client content to mcp-resources/
 │   │   ├── EmbeddingClient.java     Functional interface: float[] embed(String text)
 │   │   ├── OllamaEmbeddingClient.java  HTTP client for Ollama /api/embeddings
-│   │   ├── EmbeddingIndex.java      SQLite-backed vector store; cosine similarity search
+│   │   ├── EmbeddingIndex.java      Postgres pgvector index; queries via McpEmbeddingDao
 │   │   ├── SummarizeClient.java     Functional interface: String summarize(String text)
 │   │   └── OllamaSummarizeClient.java  HTTP client for Ollama /api/generate (llama3.2)
 │   ├── digitalme/
-│   │   ├── DigitalMeStorage.java    Abstraction over Lucene index + SQLite
+│   │   ├── DigitalMeStorage.java    Abstraction over Lucene index + Postgres
 │   │   ├── DefaultDigitalMeStorage.java
 │   │   ├── SemanticSearch.java      EmbeddingIndex + SummarizeClient; search + snippet + summarize
 │   │   ├── ExclusionRules.java      Filters noisy sources from search results
@@ -83,8 +84,8 @@ digital-me/
 │       └── IndexPage.java           REST controller (@RestController)
 ├── src/main/resources/
 │   ├── application.properties
-│   ├── digital-me-db-1.sql          DB migration script (schema v1: TEXT_ENTRY tables)
-│   ├── digital-me-db-2.sql          DB migration script (schema v2: MCP_EMBEDDING table)
+│   ├── digital-me-db-1.sql          DB migration script (full Postgres schema: all tables + `vector` extension + HNSW index)
+│   ├── digital-me-db-2.sql          DB migration script (widens TEXT_ENTRY.TIME column)
 │   └── static/                      Built frontend assets (committed to git)
 ├── checkstyle.xml                   Checkstyle rules (unused imports, equals-avoid-null, etc.)
 └── .claude/

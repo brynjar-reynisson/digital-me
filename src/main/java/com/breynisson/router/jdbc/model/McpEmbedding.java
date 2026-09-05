@@ -1,6 +1,7 @@
 package com.breynisson.router.jdbc.model;
 
 import com.breynisson.router.jdbc.DatabaseAdapter;
+import com.pgvector.PGvector;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -13,12 +14,12 @@ public class McpEmbedding {
     public final int chunkIndex;
     public final String sourceUrl;
     public final String chunkText;
-    public final byte[] embedding;
+    public final float[] embedding;
     public final String model;
     public final String indexedAt;
 
     public McpEmbedding(String filePath, int chunkIndex, String sourceUrl, String chunkText,
-                         byte[] embedding, String model, String indexedAt) {
+                         float[] embedding, String model, String indexedAt) {
         this.filePath = filePath;
         this.chunkIndex = chunkIndex;
         this.sourceUrl = sourceUrl;
@@ -34,12 +35,13 @@ public class McpEmbedding {
         public List<McpEmbedding> transform(ResultSet rset) throws SQLException {
             List<McpEmbedding> list = new ArrayList<>();
             while (rset.next()) {
+                PGvector vector = (PGvector) rset.getObject(5); // EMBEDDING
                 list.add(new McpEmbedding(
                         rset.getString(1),   // FILE_PATH
                         rset.getInt(2),       // CHUNK_INDEX
                         rset.getString(3),   // SOURCE_URL
                         rset.getString(4),   // CHUNK_TEXT
-                        rset.getBytes(5),    // EMBEDDING
+                        vector.toArray(),
                         null,                // MODEL not needed for search
                         null));              // INDEXED_AT not needed for search
             }

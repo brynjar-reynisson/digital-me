@@ -12,7 +12,7 @@
 | `POST` | `/addContent` | Durably queues content for async indexing; body: `{ source, name, content }`; returns `{ success: true }` as soon as the raw request is persisted to `ADD_CONTENT_QUEUE` — not once indexing has actually completed |
 | `GET` | `/health/index` | Embedding index coverage snapshot; returns `{ indexedFiles, totalChunks, totalFilesOnDisk, coveragePercent }` — `indexedFiles`/`totalChunks` come from `MCP_EMBEDDING` (`McpEmbeddingDao.countIndexedFiles()`/`countTotalChunks()`), `totalFilesOnDisk` is a live recursive walk of `mcp-resources/` (`EmbeddingIndex.countFilesOnDisk()`), and `coveragePercent` is `indexedFiles / totalFilesOnDisk * 100` rounded to one decimal, or `100.0` when `totalFilesOnDisk` is `0` (nothing to be behind on) rather than dividing by zero. A lightweight instantaneous read — no caching, no background thread — since even a few thousand files cost only milliseconds to walk |
 
-HTTP submissions to `/addContent` (Chrome extension, screenshot-OCR pipeline) are durably queued rather than processed inline: `IndexPage.addContent()` serializes the request to JSON, inserts it into the `ADD_CONTENT_QUEUE` table via `AddContentQueueDao`, and returns success immediately — the only durable step in the request path is that single SQLite insert, so a crash mid-request can lose at most one not-yet-queued submission rather than one mid-pipeline submission. `AddContentQueueProcessor` (`@Scheduled(fixedDelay = 2000)`) polls the queue and, for each entry, deserializes the payload and calls `DigitalMeStorage.addContent()` (the pipeline described below), deleting the row only after that call returns — so a crash mid-processing leaves the row for the next poll (after restart) to retry, the same principle `FileChangeWatcher` already relies on for its own re-scans. A payload that fails outright (e.g. corrupt JSON) increments an `ATTEMPTS` counter and is dropped with a logged error after 5 failed attempts rather than retried forever. `FileChangeWatcher` is unaffected by any of this — it still calls `DigitalMeStorage.addContent()` directly, in-process, since it's already self-healing via its own mtime-vs-`TEXT_ENTRY.TIME` comparison, independent of `addContent()`'s internals.
+HTTP submissions to `/addContent` (Chrome extension, screenshot-OCR pipeline) are durably queued rather than processed inline: `IndexPage.addContent()` serializes the request to JSON, inserts it into the `ADD_CONTENT_QUEUE` table via `AddContentQueueDao`, and returns success immediately — the only durable step in the request path is that single Postgres insert, so a crash mid-request can lose at most one not-yet-queued submission rather than one mid-pipeline submission. `AddContentQueueProcessor` (`@Scheduled(fixedDelay = 2000)`) polls the queue and, for each entry, deserializes the payload and calls `DigitalMeStorage.addContent()` (the pipeline described below), deleting the row only after that call returns — so a crash mid-processing leaves the row for the next poll (after restart) to retry, the same principle `FileChangeWatcher` already relies on for its own re-scans. A payload that fails outright (e.g. corrupt JSON) increments an `ATTEMPTS` counter and is dropped with a logged error after 5 failed attempts rather than retried forever. `FileChangeWatcher` is unaffected by any of this — it still calls `DigitalMeStorage.addContent()` directly, in-process, since it's already self-healing via its own mtime-vs-`TEXT_ENTRY.TIME` comparison, independent of `addContent()`'s internals.
 
 `DigitalMeStorage.addContent()` uses a `ReentrantLock` for thread safety around the synchronous write path (Lucene, `TEXT_ENTRY`, mcp-resources file). The embedding step (`embeddingIndex.indexFile()`) runs outside that lock on a dedicated bounded worker pool (`embedding.executor.pool-size`, default 1) instead of an unbounded `CompletableFuture.runAsync` — a burst of submissions (fast browsing, several screenshot-session flushes) queues up and drains one (or `pool-size` many) at a time rather than firing unbounded concurrent Ollama calls. Before anything else, `LocalFileEndpoint.isLocalFileUrl()` checks whether `source` is this app's own `/localFile?...` rendering endpoint (regardless of hostname/port, and regardless of whether the URL even has a scheme prefix) — if so, the submission is silently discarded (still returns success, nothing is written or indexed), preventing a feedback loop where the Chrome extension (or the screenshot-OCR pipeline, which can incidentally capture on-screen browser chrome mentioning a `/localFile` URL) re-captures already-indexed content as if it were new. If `source` starts with `http`, content is stripped to plain text via Jsoup before indexing — unless `ScreenshotCoverage.isCovered()` determines the URL is a LinkedIn/Facebook/Quora/Google Docs page already captured more completely by the screenshot OCR pipeline, in which case the submission is silently discarded the same way. If a `PageHandler` in the `PageHandlers` registry matches the URL (e.g. `VisirPageHandler` for visir.is), its `extract()` result is used instead of the generic Jsoup strip; if that handler returns no extractable content, the submission is silently discarded the same way. Before any Jsoup parsing, `DefaultDigitalMeStorage.decodeIfJsonEncoded()` reverses one layer of JSON-string escaping the Chrome extension applies to page content (`content-script.js` does `JSON.stringify(document.body.innerHTML)`, and `background.js`'s own `JSON.stringify(request)` envelope means the server's single Jackson decode only removes the outer layer) — without this, HTML attribute values arrive escaped (e.g. `itemprop=\"articleBody\"`), which silently breaks any `PageHandler` selector that matches on attributes rather than plain text. The decode is a no-op for content that isn't JSON-string-shaped. If a matched handler's `extract()` returns `null` but the URL looks like an article (per that handler's `looksLikeArticleUrl()`), the submission falls back to the generic Jsoup strip instead of being discarded, and `LayoutChangeReporter` writes a one-per-site-per-month alert file to `<dataDir>/errors/` — see the `PageHandler` subsystem note below.
 
@@ -52,11 +52,11 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - `deleteIndex()` deletes all files in the index dir (used in tests)
 
 ### `DatabaseAdapter` (static utility class)
-- Singleton SQLite connection; reopens if closed
+- Manages a Postgres connection pool (HikariCP); `configure(host, port, database, user, password, schema)` points it at an instance and creates the schema if needed
+- `getConnection()` returns a pooled connection from HikariCP; registers pgvector type support via `PGvector.addVectorType(connection)`
 - `init()` must be called at startup — runs numbered migration scripts from classpath (`digital-me-db-N.sql`)
 - Migration tracking: `APPLICATION_METADATA` table with `database.version` key
-- To add a migration: create `src/main/resources/digital-me-db-5.sql` (next number after the existing four — check the highest existing `digital-me-db-N.sql` before picking a number)
-- `setDefaultDatabasePath()` also closes and nulls the current connection, so the new path takes effect immediately
+- To add a migration: create `src/main/resources/digital-me-db-3.sql` (next number after the existing two — check the highest existing `digital-me-db-N.sql` before picking a number)
 
 ### `TextEntryDao`
 - `NAME` column stores the file absolute path or URL (`source`)
@@ -87,14 +87,14 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 
 ### `EmbeddingIndex`
 - Runs `indexAll()` on a daemon thread at startup: loads already-indexed file paths from DB (one SELECT), then walks `mcp-resources/` and indexes new files only
-- `indexFile(path)`: reads the file, splits the body into ~2000-char sentence-boundary-aware chunks via `Chunker`, embeds each chunk (prefixed with `ollama.embedding.document-prefix`), stores one row per chunk in `MCP_EMBEDDING` with a unit-normalized vector, and adds each to the in-memory cache
-- `findSimilar(query, topK)`: embeds the (prefixed) query, scores every cached chunk vector via dot product, drops chunks below `semantic-search.min-score`, dedups to each **source URL's** best-scoring chunk (not each mcp-resources file path — a source resubmitted under a different physical file, whether a legitimate re-index or a duplicate capture, still collapses to one result), and returns the top-K `ScoredResult` records (`filePath`, `sourceUrl`, `score`, `chunkText`)
+- `indexFile(path)`: reads the file, splits the body into ~2000-char sentence-boundary-aware chunks via `Chunker`, embeds each chunk (prefixed with `ollama.embedding.document-prefix`), normalizes to unit length, and stores one row per chunk in `MCP_EMBEDDING` via `McpEmbeddingDao.upsert()`
+- `findSimilar(query, topK)`: embeds the (prefixed) query, normalizes to unit length, delegates directly to `McpEmbeddingDao.findSimilar(queryVector, minScore, topK)` for SQL-side scoring via pgvector's `<=>` operator. Deduplication to each **source URL's** best-scoring chunk happens in the SQL `DISTINCT ON (source_url)` clause — a source resubmitted under a different physical file path still collapses to one result
 - `indexAll()` additionally reconciles the table on each run: deletes rows for files no longer on disk, and deletes rows whose `MODEL` doesn't match the currently configured `ollama.embedding.model` (both get re-embedded on the same pass)
 - `countFilesOnDisk()` — recursive count of regular files under `mcp-resources/` (reuses the same walk as `listFilePaths()`, counting instead of collecting); returns `0` if the directory doesn't exist. Backs the `totalFilesOnDisk` figure in `/health/index`
 
 ### `McpEmbeddingDao`
-- `upsert(McpEmbedding)` — INSERT OR REPLACE into `MCP_EMBEDDING`, keyed by `(FILE_PATH, CHUNK_INDEX)`
-- `findAll()` — returns list of `McpEmbedding` (reads FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING columns; MODEL/INDEXED_AT come back null, not needed for search)
+- `upsert(McpEmbedding)` — Postgres `INSERT ... ON CONFLICT (FILE_PATH, CHUNK_INDEX) DO UPDATE` into `MCP_EMBEDDING`, storing embedding as a `PGvector`
+- `findSimilar(float[] queryVector, float minScore, int topK)` — SQL query using pgvector's `<=>` operator with schema-qualified `OPERATOR(extensions.<=>)` (since the extension lives in the shared `extensions` schema, not the app's own schema). Uses `DISTINCT ON (source_url)` to deduplicate to each source URL's best-scoring chunk, filters to scores >= minScore, and returns top-K results as `ScoredMatch` records. This is where all semantic scoring happens — the application no longer loads vectors into memory or does dot-product scoring
 - `findAllFilePaths()` — returns `Set<String>` of already-indexed paths, `SELECT DISTINCT` since multiple chunk rows share a file path
 - `deleteByFilePath(filePath)` — deletes all chunk rows for a file (used to reconcile deleted files)
 - `deleteByModelNot(currentModel)` — deletes rows whose `MODEL` doesn't match the currently configured embedding model
@@ -103,7 +103,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 
 ### `SummaryCacheDao`
 - `find(sourceUrl)` — returns the cached summary for a source, or `null` if not cached
-- `upsert(sourceUrl, summary)` — INSERT OR REPLACE into `SUMMARY_CACHE`, keyed by `SOURCE_URL`
+- `upsert(sourceUrl, summary)` — `INSERT ... ON CONFLICT (SOURCE_URL) DO UPDATE` into `SUMMARY_CACHE`, keyed by `SOURCE_URL`
 - `deleteBySourceUrl(sourceUrl)` — called by `ResourceReceiver.deleteExistingFor()` and `ClaudeSessionIndexer`'s stale-file cleanup whenever a source's content is replaced, so a re-summarized file never serves a stale cached summary
 
 ### `SemanticSearch`
@@ -165,17 +165,77 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 
 ## Database schema
 
+Postgres (via `digital-me-db-1.sql` and `digital-me-db-2.sql`, run in order):
+
+### `digital-me-db-1.sql` (initial schema)
 ```sql
-APPLICATION_METADATA (KEY PK, VALUE)   -- stores database.version
-TEXT_ENTRY (UUID PK, TIME, NAME)        -- indexed content entries
-TEXT_ENTRY_METADATA (TEXT_ENTRY_UUID, KEY, VALUE, PK composite)
-MCP_EMBEDDING (FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING BLOB, MODEL, INDEXED_AT, PK(FILE_PATH, CHUNK_INDEX))  -- chunked vector embeddings
-SUMMARY_CACHE (SOURCE_URL PK, SUMMARY, CREATED_AT)  -- cached on-demand summaries, discarded when a source's content is replaced
-ADD_CONTENT_QUEUE (UUID PK, PAYLOAD, RECEIVED_AT, ATTEMPTS)  -- durable queue for HTTP /addContent submissions, drained by AddContentQueueProcessor
+-- This shared database (Supabase local dev stack, also serving agent-suite
+-- and soulman) already has a conventional "extensions" schema for exactly
+-- this purpose — install pgvector there once rather than into this
+-- table's own "digitalme" schema, and reference the type schema-qualified
+-- below so it resolves correctly regardless of this schema's search_path.
+CREATE EXTENSION IF NOT EXISTS vector SCHEMA extensions;
+
+CREATE TABLE APPLICATION_METADATA (
+    KEY VARCHAR(1024) PRIMARY KEY NOT NULL,
+    VALUE TEXT
+);
+
+CREATE TABLE TEXT_ENTRY (
+    UUID VARCHAR(60) PRIMARY KEY NOT NULL,
+    TIME VARCHAR(23) NOT NULL,
+    NAME TEXT NOT NULL
+);
+
+CREATE TABLE TEXT_ENTRY_METADATA (
+    TEXT_ENTRY_UUID VARCHAR(60) NOT NULL,
+    KEY VARCHAR(1024) NOT NULL,
+    VALUE TEXT,
+    PRIMARY KEY (TEXT_ENTRY_UUID, KEY)
+);
+
+CREATE TABLE MCP_EMBEDDING (
+    FILE_PATH   TEXT NOT NULL,
+    CHUNK_INDEX INTEGER NOT NULL DEFAULT 0,
+    SOURCE_URL  TEXT NOT NULL,
+    CHUNK_TEXT  TEXT NOT NULL,
+    EMBEDDING   extensions.VECTOR(768) NOT NULL,
+    MODEL       TEXT NOT NULL,
+    INDEXED_AT  TEXT NOT NULL,
+    PRIMARY KEY (FILE_PATH, CHUNK_INDEX)
+);
+CREATE INDEX mcp_embedding_hnsw_idx ON MCP_EMBEDDING
+    USING hnsw (EMBEDDING extensions.vector_cosine_ops);
+
+CREATE TABLE SUMMARY_CACHE (
+    SOURCE_URL TEXT NOT NULL PRIMARY KEY,
+    SUMMARY    TEXT NOT NULL,
+    CREATED_AT TEXT NOT NULL
+);
+
+CREATE TABLE ADD_CONTENT_QUEUE (
+    UUID        VARCHAR(60) NOT NULL PRIMARY KEY,
+    PAYLOAD     TEXT        NOT NULL,
+    RECEIVED_AT TEXT        NOT NULL,
+    ATTEMPTS    INTEGER     NOT NULL DEFAULT 0
+);
+
+INSERT INTO APPLICATION_METADATA (KEY, VALUE) VALUES ('database.version', '1');
+```
+
+### `digital-me-db-2.sql` (schema v2: widen TIME column)
+```sql
+-- Widen TEXT_ENTRY.TIME from VARCHAR(23) to TEXT to accommodate full-precision ISO-8601 timestamps
+-- (Instant.toString() can produce up to 30 characters with nanosecond precision)
+ALTER TABLE TEXT_ENTRY ALTER COLUMN TIME TYPE TEXT;
+
+INSERT INTO APPLICATION_METADATA (KEY, VALUE) VALUES ('database.version', '2')
+ON CONFLICT (KEY) DO UPDATE SET VALUE = '2';
 ```
 
 `TIME` and `INDEXED_AT` are stored as ISO-8601 instant strings (e.g. `2024-01-15T10:30:00Z`).
-`EMBEDDING` is a raw `BLOB` of packed IEEE 754 floats (4 bytes each, big-endian via `ByteBuffer`).
+
+`VECTOR(768)` is fixed to `nomic-embed-text`'s output dimension — the only supported embedding model. Changing `ollama.embedding.model` to a different-dimension model requires a new migration (`ALTER TABLE MCP_EMBEDDING ALTER COLUMN EMBEDDING TYPE vector(N)`), the same way `deleteByModelNot()` already discards and re-embeds on any model change today. `EMBEDDING` is queried via pgvector's `<=>` cosine-distance operator, not loaded into application memory — but scored exactly and sequentially: `findSimilar()`'s `ORDER BY source_url, embedding OPERATOR(extensions.<=>) ?` sorts primarily by `source_url` (to support `DISTINCT ON (source_url)`) with no `LIMIT` on that subquery, so Postgres cannot use the `mcp_embedding_hnsw_idx` HNSW index for this query — it sequentially scans and cosine-scores every row instead. Results are exact (not approximate ANN), and the index exists on the column for a future differently-shaped query to use, but no current query is index-accelerated.
 
 ---
 

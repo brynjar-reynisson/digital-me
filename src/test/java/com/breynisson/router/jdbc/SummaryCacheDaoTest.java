@@ -3,26 +3,21 @@ package com.breynisson.router.jdbc;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
-import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class SummaryCacheDaoTest {
 
-    @TempDir
-    static Path dbDir;
+    static String schema;
 
     @BeforeAll
-    static void setUpDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(dbDir.resolve("test.db").toString());
-        DatabaseAdapter.init();
+    static void setUp() {
+        schema = PostgresTestSupport.createIsolatedSchema("summarycachedao");
     }
 
     @AfterAll
-    static void tearDownDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(null);
+    static void tearDown() {
+        PostgresTestSupport.dropSchema(schema);
     }
 
     private static void cleanup(String sourceUrl) {

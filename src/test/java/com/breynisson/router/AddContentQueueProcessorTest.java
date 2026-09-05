@@ -4,7 +4,7 @@ import com.breynisson.router.digitalme.AddContentRequest;
 import com.breynisson.router.digitalme.AddContentRequests;
 import com.breynisson.router.digitalme.DefaultDigitalMeStorage;
 import com.breynisson.router.jdbc.AddContentQueueDao;
-import com.breynisson.router.jdbc.DatabaseAdapter;
+import com.breynisson.router.jdbc.PostgresTestSupport;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.jdbc.model.AddContentQueueEntry;
 import com.breynisson.router.lucene.LuceneIndex;
@@ -26,8 +26,7 @@ class AddContentQueueProcessorTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    @TempDir
-    static Path dbDir;
+    static String schema;
 
     @TempDir
     static Path dataDir;
@@ -40,13 +39,12 @@ class AddContentQueueProcessorTest {
 
     @BeforeAll
     static void setUpDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(dbDir.resolve("test.db").toString());
-        DatabaseAdapter.init();
+        schema = PostgresTestSupport.createIsolatedSchema("addcontentqueueprocessor");
     }
 
     @AfterAll
     static void tearDownDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(null);
+        PostgresTestSupport.dropSchema(schema);
     }
 
     @BeforeEach

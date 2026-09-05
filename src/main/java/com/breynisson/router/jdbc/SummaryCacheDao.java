@@ -14,7 +14,8 @@ public class SummaryCacheDao {
 
     public static void upsert(String sourceUrl, String summary) {
         DatabaseAdapter.runPreparedStatement(
-                "INSERT OR REPLACE INTO " + TABLE + " (SOURCE_URL, SUMMARY, CREATED_AT) VALUES (?, ?, ?)",
+                "INSERT INTO " + TABLE + " (SOURCE_URL, SUMMARY, CREATED_AT) VALUES (?, ?, ?) "
+              + "ON CONFLICT (SOURCE_URL) DO UPDATE SET SUMMARY = EXCLUDED.SUMMARY, CREATED_AT = EXCLUDED.CREATED_AT",
                 sourceUrl, summary, DatabaseAdapter.instantToTime(Instant.now()));
     }
 

@@ -17,9 +17,16 @@ public class AppConfig {
 
     private final String dataDir;
 
-    public AppConfig(@Value("${data.dir:.}") String dataDir) {
+    public AppConfig(
+            @Value("${data.dir:.}") String dataDir,
+            @Value("${postgres.host:localhost}") String postgresHost,
+            @Value("${postgres.port:54322}") int postgresPort,
+            @Value("${postgres.database:postgres}") String postgresDatabase,
+            @Value("${postgres.user:postgres}") String postgresUser,
+            @Value("${postgres.password:postgres}") String postgresPassword,
+            @Value("${postgres.schema:digitalme}") String postgresSchema) {
         this.dataDir = dataDir;
-        DatabaseAdapter.setDefaultDatabasePath(dataDir + "/digital-me.db");
+        DatabaseAdapter.configure(postgresHost, postgresPort, postgresDatabase, postgresUser, postgresPassword, postgresSchema);
         LuceneIndex.setIndexPath(dataDir + "/lucene-index");
         DatabaseAdapter.init();
     }
