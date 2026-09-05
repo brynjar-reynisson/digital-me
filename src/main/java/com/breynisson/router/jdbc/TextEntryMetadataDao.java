@@ -10,7 +10,10 @@ public class TextEntryMetadataDao {
     }
 
     public static void upsert(String uuid, String key, String value) {
-        DatabaseAdapter.runPreparedStatement("INSERT OR REPLACE INTO " + TABLE_NAME + " (TEXT_ENTRY_UUID,KEY,VALUE) VALUES (?,?,?)", uuid, key, value);
+        DatabaseAdapter.runPreparedStatement(
+                "INSERT INTO " + TABLE_NAME + " (TEXT_ENTRY_UUID,KEY,VALUE) VALUES (?,?,?) "
+              + "ON CONFLICT (TEXT_ENTRY_UUID, KEY) DO UPDATE SET VALUE = EXCLUDED.VALUE",
+                uuid, key, value);
     }
 
     public static String get(String uuid, String key) {
