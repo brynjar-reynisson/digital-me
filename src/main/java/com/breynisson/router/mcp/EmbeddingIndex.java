@@ -1,7 +1,6 @@
 package com.breynisson.router.mcp;
 
 import com.breynisson.router.jdbc.McpEmbeddingDao;
-import com.breynisson.router.jdbc.model.McpEmbedding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,27 +10,22 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 /**
- * Stores and queries dense vector embeddings for files in mcp-resources/.
+ * Indexes and queries dense vector embeddings for files in mcp-resources/.
  * Documents are split into chunks (see {@link Chunker}); each chunk gets its own row in the
- * MCP_EMBEDDING SQLite table. A unit-normalized vector cache is kept in memory for fast
- * dot-product scoring. Falls back gracefully when the EmbeddingClient (Ollama) is unavailable.
+ * MCP_EMBEDDING Postgres table (pgvector column, HNSW-indexed). Falls back gracefully when
+ * the EmbeddingClient (Ollama) is unavailable.
  */
 @Component
 public class EmbeddingIndex {
@@ -45,7 +39,6 @@ public class EmbeddingIndex {
     private final String documentPrefix;
     private final String queryPrefix;
     private final float minScore;
-    private final Map<CacheKey, CachedEmbedding> cache = new ConcurrentHashMap<>();
 
     @Autowired
     public EmbeddingIndex(
@@ -68,10 +61,6 @@ public class EmbeddingIndex {
         this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f);
     }
 
-    private record CacheKey(String filePath, int chunkIndex) {}
-
-    private record CachedEmbedding(String sourceUrl, String chunkText, float[] vector) {}
-
     /** Indexes any mcp-resources files not yet in the embedding table. Runs async at startup. */
     @EventListener(ApplicationReadyEvent.class)
     public void indexAllOnStartup() {
@@ -86,7 +75,6 @@ public class EmbeddingIndex {
             Set<String> diskPaths = listFilePaths();
             reconcileStaleFiles(diskPaths);
             McpEmbeddingDao.deleteByModelNot(model);
-            loadCacheFromDatabase();
             Set<String> indexed = McpEmbeddingDao.findAllFilePaths();
             for (String path : diskPaths) {
                 if (!indexed.contains(path)) indexFile(Paths.get(path));
@@ -123,14 +111,6 @@ public class EmbeddingIndex {
         }
     }
 
-    private void loadCacheFromDatabase() {
-        cache.clear();
-        for (McpEmbedding e : McpEmbeddingDao.findAll()) {
-            cache.put(new CacheKey(e.filePath, e.chunkIndex),
-                    new CachedEmbedding(e.sourceUrl, e.chunkText, fromBytes(e.embedding)));
-        }
-    }
-
     /** Generates and stores embeddings for the given file, one row per chunk. No-ops if Ollama is unavailable. */
     public void indexFile(Path file) {
         try {
@@ -141,8 +121,7 @@ public class EmbeddingIndex {
             String filePath = file.toAbsolutePath().toString();
             String indexedAt = Instant.now().toString();
 
-            List<McpEmbedding> rows = new ArrayList<>();
-            List<float[]> vectors = new ArrayList<>();
+            List<com.breynisson.router.jdbc.model.McpEmbedding> rows = new ArrayList<>();
             List<String> chunks = Chunker.chunk(body);
             for (int i = 0; i < chunks.size(); i++) {
                 String chunkText = chunks.get(i);
@@ -150,14 +129,11 @@ public class EmbeddingIndex {
                 float[] embedding = embeddingClient.embed(toEmbed);
                 if (embedding == null) return; // Ollama unavailable — retry the whole file next pass
                 float[] normalized = normalize(embedding);
-                rows.add(new McpEmbedding(filePath, i, sourceUrl, chunkText, toBytes(normalized), model, indexedAt));
-                vectors.add(normalized);
+                rows.add(new com.breynisson.router.jdbc.model.McpEmbedding(
+                        filePath, i, sourceUrl, chunkText, normalized, model, indexedAt));
             }
-            for (int i = 0; i < rows.size(); i++) {
-                McpEmbedding row = rows.get(i);
+            for (com.breynisson.router.jdbc.model.McpEmbedding row : rows) {
                 McpEmbeddingDao.upsert(row);
-                cache.put(new CacheKey(row.filePath, row.chunkIndex),
-                        new CachedEmbedding(row.sourceUrl, row.chunkText, vectors.get(i)));
             }
             log.debug("Indexed {} chunk(s) for {}", rows.size(), file.getFileName());
         } catch (Exception e) {
@@ -167,9 +143,8 @@ public class EmbeddingIndex {
 
     /**
      * Embeds the query and returns the top-K most similar files by cosine similarity,
-     * deduplicated to each source URL's single best-scoring chunk (collapses re-submissions of the
-     * same logical document, even when stored under different mcp-resources file paths).
-     * Returns an empty list if Ollama is unavailable or no embeddings are stored.
+     * deduplicated to each source URL's single best-scoring chunk. Returns an empty list if
+     * Ollama is unavailable or no embeddings are stored.
      */
     public List<ScoredResult> findSimilar(String query, int topK) {
         String prefixedQuery = queryPrefix.isEmpty() ? query : queryPrefix + " " + query;
@@ -177,21 +152,9 @@ public class EmbeddingIndex {
         if (rawQueryEmbedding == null) return List.of();
         float[] queryVector = normalize(rawQueryEmbedding);
         try {
-            List<ScoredResult> scoredChunks = cache.entrySet().stream()
-                    .map(e -> new ScoredResult(
-                            e.getKey().filePath(),
-                            e.getValue().sourceUrl(),
-                            dot(queryVector, e.getValue().vector()),
-                            e.getValue().chunkText()))
-                    .filter(r -> r.score() >= minScore)
-                    .sorted(Comparator.comparingDouble(ScoredResult::score).reversed())
+            return McpEmbeddingDao.findSimilar(queryVector, minScore, topK).stream()
+                    .map(m -> new ScoredResult(m.filePath(), m.sourceUrl(), m.score(), m.chunkText()))
                     .toList();
-
-            Map<String, ScoredResult> bestPerSource = new LinkedHashMap<>();
-            for (ScoredResult r : scoredChunks) {
-                bestPerSource.putIfAbsent(r.sourceUrl(), r);
-            }
-            return bestPerSource.values().stream().limit(topK).toList();
         } catch (Exception e) {
             log.warn("Embedding search failed", e);
             return List.of();
@@ -199,13 +162,6 @@ public class EmbeddingIndex {
     }
 
     public record ScoredResult(String filePath, String sourceUrl, float score, String chunkText) {}
-
-    private static float dot(float[] a, float[] b) {
-        int len = Math.min(a.length, b.length);
-        double sum = 0;
-        for (int i = 0; i < len; i++) sum += a[i] * (double) b[i];
-        return (float) sum;
-    }
 
     private static float[] normalize(float[] v) {
         double magnitude = 0;
@@ -215,18 +171,5 @@ public class EmbeddingIndex {
         float[] out = new float[v.length];
         for (int i = 0; i < v.length; i++) out[i] = (float) (v[i] / magnitude);
         return out;
-    }
-
-    private static byte[] toBytes(float[] floats) {
-        ByteBuffer buf = ByteBuffer.allocate(floats.length * Float.BYTES);
-        for (float f : floats) buf.putFloat(f);
-        return buf.array();
-    }
-
-    private static float[] fromBytes(byte[] bytes) {
-        ByteBuffer buf = ByteBuffer.wrap(bytes);
-        float[] floats = new float[bytes.length / Float.BYTES];
-        for (int i = 0; i < floats.length; i++) floats[i] = buf.getFloat();
-        return floats;
     }
 }
