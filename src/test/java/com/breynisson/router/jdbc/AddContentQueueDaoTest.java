@@ -4,27 +4,23 @@ import com.breynisson.router.jdbc.model.AddContentQueueEntry;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class AddContentQueueDaoTest {
 
-    @TempDir
-    static Path dbDir;
+    static String schema;
 
     @BeforeAll
-    static void setUpDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(dbDir.resolve("test.db").toString());
-        DatabaseAdapter.init();
+    static void setUp() {
+        schema = PostgresTestSupport.createIsolatedSchema("addcontentqueuedao");
     }
 
     @AfterAll
-    static void tearDownDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(null);
+    static void tearDown() {
+        PostgresTestSupport.dropSchema(schema);
     }
 
     @Test
