@@ -27,12 +27,20 @@ public class SpringBootApplication {
             // Prevent the Camel file-watch/scheduler routes (FileChangeWatcher, ContentReceive)
             // from loading during a migration run -- left enabled, they index newly-noticed local
             // files into MCP_EMBEDDING/TEXT_ENTRY concurrently with the migrator's own bulk copy,
-            // racing it for the same primary keys. An include pattern matching no real path is the
-            // simplest way to make Camel load zero routes for this run. This must be passed as a
-            // command-line argument, not via builder.properties() (which sets low-priority default
-            // properties that application.properties's own explicit setting for this key overrides).
+            // racing it for the same primary keys. Camel's route collector requires the directory
+            // itself to exist (even if nothing in it matches a wildcard), so point the pattern at a
+            // freshly-created, guaranteed-empty temp directory rather than an arbitrary nonexistent
+            // path. This must be passed as a command-line argument, not via builder.properties()
+            // (which sets low-priority default properties that application.properties's own
+            // explicit setting for this key overrides).
             List<String> argsWithOverride = new ArrayList<>(java.util.Arrays.asList(args));
-            argsWithOverride.add("--camel.springboot.routes-include-pattern=file:no-routes-during-migration/*.xml");
+            try {
+                java.nio.file.Path noRoutesDir = java.nio.file.Files.createTempDirectory("digitalme-no-routes-");
+                argsWithOverride.add("--camel.springboot.routes-include-pattern=file:"
+                        + noRoutesDir.toString().replace('\\', '/') + "/*.xml");
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
             args = argsWithOverride.toArray(new String[0]);
         }
         builder.run(args);
