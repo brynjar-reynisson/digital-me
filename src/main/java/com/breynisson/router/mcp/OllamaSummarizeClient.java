@@ -3,9 +3,6 @@ package com.breynisson.router.mcp;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -18,8 +15,6 @@ import java.util.Map;
  * Calls Ollama's local generate endpoint to produce a short summary.
  * Returns {@code null} (and logs a warning) if Ollama is not reachable.
  */
-@Component
-@ConditionalOnProperty(prefix = "summarize", name = "provider", havingValue = "ollama")
 public class OllamaSummarizeClient implements SummarizeClient {
 
     private static final Logger log = LoggerFactory.getLogger(OllamaSummarizeClient.class);
@@ -32,8 +27,8 @@ public class OllamaSummarizeClient implements SummarizeClient {
             .build();
 
     public OllamaSummarizeClient(
-            @Value("${ollama.url:http://localhost:11434}") String ollamaUrl,
-            @Value("${ollama.summarize.model:llama3.2}") String model,
+            String ollamaUrl,
+            String model,
             ObjectMapper objectMapper) {
         this.ollamaUrl = ollamaUrl;
         this.model = model;

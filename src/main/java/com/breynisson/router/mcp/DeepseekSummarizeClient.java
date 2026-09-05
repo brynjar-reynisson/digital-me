@@ -4,9 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -18,8 +15,6 @@ import java.util.regex.Pattern;
  * Calls the {@code opencode} CLI (routed to DeepSeek) to produce a short summary.
  * Returns {@code null} (and logs a warning) if opencode is not available or times out.
  */
-@Component
-@ConditionalOnProperty(prefix = "summarize", name = "provider", havingValue = "deepseek", matchIfMissing = true)
 public class DeepseekSummarizeClient implements SummarizeClient {
 
     private static final Logger log = LoggerFactory.getLogger(DeepseekSummarizeClient.class);
@@ -37,9 +32,9 @@ public class DeepseekSummarizeClient implements SummarizeClient {
     // Windows-installed npm CLIs are .cmd shims; ProcessBuilder does not do PATHEXT-style
     // resolution of bare command names the way cmd.exe does, so the extension is required.
     public DeepseekSummarizeClient(
-            @Value("${opencode.command:opencode.cmd}") String opencodeCommand,
-            @Value("${opencode.summarize.model:deepseek/deepseek-v4-flash}") String model,
-            @Value("${opencode.summarize.timeout-seconds:60}") long timeoutSeconds,
+            String opencodeCommand,
+            String model,
+            long timeoutSeconds,
             ObjectMapper objectMapper) {
         this.opencodeCommand = opencodeCommand;
         this.model = model;
