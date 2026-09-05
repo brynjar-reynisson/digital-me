@@ -74,7 +74,7 @@ public class AppConfig {
             @Value("${ollama.summarize.model:llama3.2}") String ollamaModel,
             @Value("${gemini.api.base-url:https://generativelanguage.googleapis.com}") String geminiBaseUrl,
             @Value("${gemini.api.key:}") String geminiApiKey,
-            @Value("${gemini.summarize.model:gemini-2.5-flash-lite}") String geminiModel,
+            @Value("${gemini.summarize.model:gemini-3.5-flash-lite}") String geminiModel,
             @Value("${gemini.summarize.timeout-seconds:10}") long geminiTimeoutSeconds) {
         DeepseekSummarizeClient deepseek = new DeepseekSummarizeClient(opencodeCommand, deepseekModel, deepseekTimeoutSeconds, objectMapper);
         OllamaSummarizeClient ollama = new OllamaSummarizeClient(ollamaUrl, ollamaModel, objectMapper);
