@@ -32,8 +32,8 @@ Exposed at `POST /mcp` (Streamable HTTP transport, `HttpServletStreamableServerT
 - Ollama must be running locally (`http://localhost:11434`)
 - Required models:
   - `ollama pull nomic-embed-text` (274 MB) — for semantic search embeddings
-  - `ollama pull llama3.2` — for on-demand summarization (default; configurable via `ollama.summarize.model`)
-- If Ollama is unavailable the app still starts; search falls back to keyword scan and summarization returns empty
+  - `ollama pull llama3.2` — needed only when `summarize.provider=ollama` is explicitly set; not required for the default Gemini/DeepSeek summarization path (configurable via `ollama.summarize.model`)
+- If Ollama is unavailable the app still starts; semantic search falls back to keyword scan (embeddings need Ollama), while summarization is unaffected — it defaults to Gemini/DeepSeek, neither of which depends on Ollama
 
 ## Claude Desktop config
 

@@ -75,14 +75,21 @@ public class AppConfig {
             @Value("${gemini.api.base-url:https://generativelanguage.googleapis.com}") String geminiBaseUrl,
             @Value("${gemini.api.key:}") String geminiApiKey,
             @Value("${gemini.summarize.model:gemini-2.5-flash-lite}") String geminiModel,
-            @Value("${gemini.summarize.timeout-seconds:20}") long geminiTimeoutSeconds) {
+            @Value("${gemini.summarize.timeout-seconds:10}") long geminiTimeoutSeconds) {
         DeepseekSummarizeClient deepseek = new DeepseekSummarizeClient(opencodeCommand, deepseekModel, deepseekTimeoutSeconds, objectMapper);
+        OllamaSummarizeClient ollama = new OllamaSummarizeClient(ollamaUrl, ollamaModel, objectMapper);
+        GeminiSummarizeClient gemini = new GeminiSummarizeClient(geminiBaseUrl, geminiApiKey, geminiModel, geminiTimeoutSeconds, objectMapper);
+        return buildSummarizeClient(provider, deepseek, gemini, ollama);
+    }
+
+    static SummarizeClient buildSummarizeClient(
+            String provider, DeepseekSummarizeClient deepseek, GeminiSummarizeClient gemini, OllamaSummarizeClient ollama) {
         return switch (provider) {
-            case "ollama" -> new OllamaSummarizeClient(ollamaUrl, ollamaModel, objectMapper);
+            case "ollama" -> ollama;
             case "deepseek" -> deepseek;
-            default -> new FallbackSummarizeClient(
-                    new GeminiSummarizeClient(geminiBaseUrl, geminiApiKey, geminiModel, geminiTimeoutSeconds, objectMapper),
-                    deepseek);
+            case "gemini" -> new FallbackSummarizeClient(gemini, deepseek);
+            default -> throw new IllegalArgumentException(
+                    "Unknown summarize.provider '" + provider + "' (expected gemini, deepseek, or ollama)");
         };
     }
 }

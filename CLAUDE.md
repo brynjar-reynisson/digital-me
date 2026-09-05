@@ -68,6 +68,9 @@ digital-me/
 │   │   ├── OllamaEmbeddingClient.java  HTTP client for Ollama /api/embeddings
 │   │   ├── EmbeddingIndex.java      Postgres pgvector index; queries via McpEmbeddingDao
 │   │   ├── SummarizeClient.java     Functional interface: String summarize(String text)
+│   │   ├── GeminiSummarizeClient.java  HTTP client for Gemini's free-tier generateContent API (default fast summarizer)
+│   │   ├── FallbackSummarizeClient.java  Composes a primary + fallback SummarizeClient
+│   │   ├── DeepseekSummarizeClient.java  Shells out to opencode CLI (routed to DeepSeek); fallback behind Gemini by default
 │   │   └── OllamaSummarizeClient.java  HTTP client for Ollama /api/generate (llama3.2)
 │   ├── digitalme/
 │   │   ├── DigitalMeStorage.java    Abstraction over Lucene index + Postgres

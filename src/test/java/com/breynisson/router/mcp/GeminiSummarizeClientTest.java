@@ -10,6 +10,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -96,5 +97,24 @@ class GeminiSummarizeClientTest {
     @Test
     void isAvailableFalseWhenApiKeyBlank() {
         assertFalse(client("").isAvailable());
+    }
+
+    @Test
+    void summarizeSendsApiKeyOnlyInHeaderNeverInUrl() throws Exception {
+        AtomicReference<String> capturedQuery = new AtomicReference<>();
+        AtomicReference<String> capturedHeader = new AtomicReference<>();
+        server.createContext("/v1beta/models/" + MODEL + ":generateContent", exchange -> {
+            capturedQuery.set(exchange.getRequestURI().getQuery());
+            capturedHeader.set(exchange.getRequestHeaders().getFirst("x-goog-api-key"));
+            byte[] bytes = objectMapper.writeValueAsBytes(Map.of("candidates", java.util.List.of(
+                    Map.of("content", Map.of("parts", java.util.List.of(Map.of("text", "ok")))))));
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) { os.write(bytes); }
+        });
+
+        client("test-key").summarize("some long text");
+
+        assertNull(capturedQuery.get(), "API key must never appear in the query string");
+        assertEquals("test-key", capturedHeader.get());
     }
 }
