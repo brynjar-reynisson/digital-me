@@ -52,11 +52,11 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - `deleteIndex()` deletes all files in the index dir (used in tests)
 
 ### `DatabaseAdapter` (static utility class)
-- Singleton SQLite connection; reopens if closed
+- Manages a Postgres connection pool (HikariCP); `configure(host, port, database, user, password, schema)` points it at an instance and creates the schema if needed
+- `getConnection()` returns a pooled connection from HikariCP; registers pgvector type support via `PGvector.addVectorType(connection)`
 - `init()` must be called at startup — runs numbered migration scripts from classpath (`digital-me-db-N.sql`)
 - Migration tracking: `APPLICATION_METADATA` table with `database.version` key
-- To add a migration: create `src/main/resources/digital-me-db-5.sql` (next number after the existing four — check the highest existing `digital-me-db-N.sql` before picking a number)
-- `setDefaultDatabasePath()` also closes and nulls the current connection, so the new path takes effect immediately
+- To add a migration: create `src/main/resources/digital-me-db-3.sql` (next number after the existing two — check the highest existing `digital-me-db-N.sql` before picking a number)
 
 ### `TextEntryDao`
 - `NAME` column stores the file absolute path or URL (`source`)
@@ -87,14 +87,14 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 
 ### `EmbeddingIndex`
 - Runs `indexAll()` on a daemon thread at startup: loads already-indexed file paths from DB (one SELECT), then walks `mcp-resources/` and indexes new files only
-- `indexFile(path)`: reads the file, splits the body into ~2000-char sentence-boundary-aware chunks via `Chunker`, embeds each chunk (prefixed with `ollama.embedding.document-prefix`), stores one row per chunk in `MCP_EMBEDDING` with a unit-normalized vector, and adds each to the in-memory cache
-- `findSimilar(query, topK)`: embeds the (prefixed) query, scores every cached chunk vector via dot product, drops chunks below `semantic-search.min-score`, dedups to each **source URL's** best-scoring chunk (not each mcp-resources file path — a source resubmitted under a different physical file, whether a legitimate re-index or a duplicate capture, still collapses to one result), and returns the top-K `ScoredResult` records (`filePath`, `sourceUrl`, `score`, `chunkText`)
+- `indexFile(path)`: reads the file, splits the body into ~2000-char sentence-boundary-aware chunks via `Chunker`, embeds each chunk (prefixed with `ollama.embedding.document-prefix`), normalizes to unit length, and stores one row per chunk in `MCP_EMBEDDING` via `McpEmbeddingDao.upsert()`
+- `findSimilar(query, topK)`: embeds the (prefixed) query, normalizes to unit length, delegates directly to `McpEmbeddingDao.findSimilar(queryVector, minScore, topK)` for SQL-side scoring via pgvector's `<=>` operator. Deduplication to each **source URL's** best-scoring chunk happens in the SQL `DISTINCT ON (source_url)` clause — a source resubmitted under a different physical file path still collapses to one result
 - `indexAll()` additionally reconciles the table on each run: deletes rows for files no longer on disk, and deletes rows whose `MODEL` doesn't match the currently configured `ollama.embedding.model` (both get re-embedded on the same pass)
 - `countFilesOnDisk()` — recursive count of regular files under `mcp-resources/` (reuses the same walk as `listFilePaths()`, counting instead of collecting); returns `0` if the directory doesn't exist. Backs the `totalFilesOnDisk` figure in `/health/index`
 
 ### `McpEmbeddingDao`
-- `upsert(McpEmbedding)` — INSERT OR REPLACE into `MCP_EMBEDDING`, keyed by `(FILE_PATH, CHUNK_INDEX)`
-- `findAll()` — returns list of `McpEmbedding` (reads FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING columns; MODEL/INDEXED_AT come back null, not needed for search)
+- `upsert(McpEmbedding)` — Postgres `INSERT ... ON CONFLICT (FILE_PATH, CHUNK_INDEX) DO UPDATE` into `MCP_EMBEDDING`, storing embedding as a `PGvector`
+- `findSimilar(float[] queryVector, float minScore, int topK)` — SQL query using pgvector's `<=>` operator with schema-qualified `OPERATOR(extensions.<=>)` (since the extension lives in the shared `extensions` schema, not the app's own schema). Uses `DISTINCT ON (source_url)` to deduplicate to each source URL's best-scoring chunk, filters to scores >= minScore, and returns top-K results as `ScoredMatch` records. This is where all semantic scoring happens — the application no longer loads vectors into memory or does dot-product scoring
 - `findAllFilePaths()` — returns `Set<String>` of already-indexed paths, `SELECT DISTINCT` since multiple chunk rows share a file path
 - `deleteByFilePath(filePath)` — deletes all chunk rows for a file (used to reconcile deleted files)
 - `deleteByModelNot(currentModel)` — deletes rows whose `MODEL` doesn't match the currently configured embedding model
@@ -165,17 +165,77 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 
 ## Database schema
 
+Postgres (via `digital-me-db-1.sql` and `digital-me-db-2.sql`, run in order):
+
+### `digital-me-db-1.sql` (initial schema)
 ```sql
-APPLICATION_METADATA (KEY PK, VALUE)   -- stores database.version
-TEXT_ENTRY (UUID PK, TIME, NAME)        -- indexed content entries
-TEXT_ENTRY_METADATA (TEXT_ENTRY_UUID, KEY, VALUE, PK composite)
-MCP_EMBEDDING (FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING BLOB, MODEL, INDEXED_AT, PK(FILE_PATH, CHUNK_INDEX))  -- chunked vector embeddings
-SUMMARY_CACHE (SOURCE_URL PK, SUMMARY, CREATED_AT)  -- cached on-demand summaries, discarded when a source's content is replaced
-ADD_CONTENT_QUEUE (UUID PK, PAYLOAD, RECEIVED_AT, ATTEMPTS)  -- durable queue for HTTP /addContent submissions, drained by AddContentQueueProcessor
+-- This shared database (Supabase local dev stack, also serving agent-suite
+-- and soulman) already has a conventional "extensions" schema for exactly
+-- this purpose — install pgvector there once rather than into this
+-- table's own "digitalme" schema, and reference the type schema-qualified
+-- below so it resolves correctly regardless of this schema's search_path.
+CREATE EXTENSION IF NOT EXISTS vector SCHEMA extensions;
+
+CREATE TABLE APPLICATION_METADATA (
+    KEY VARCHAR(1024) PRIMARY KEY NOT NULL,
+    VALUE TEXT
+);
+
+CREATE TABLE TEXT_ENTRY (
+    UUID VARCHAR(60) PRIMARY KEY NOT NULL,
+    TIME VARCHAR(23) NOT NULL,
+    NAME TEXT NOT NULL
+);
+
+CREATE TABLE TEXT_ENTRY_METADATA (
+    TEXT_ENTRY_UUID VARCHAR(60) NOT NULL,
+    KEY VARCHAR(1024) NOT NULL,
+    VALUE TEXT,
+    PRIMARY KEY (TEXT_ENTRY_UUID, KEY)
+);
+
+CREATE TABLE MCP_EMBEDDING (
+    FILE_PATH   TEXT NOT NULL,
+    CHUNK_INDEX INTEGER NOT NULL DEFAULT 0,
+    SOURCE_URL  TEXT NOT NULL,
+    CHUNK_TEXT  TEXT NOT NULL,
+    EMBEDDING   extensions.VECTOR(768) NOT NULL,
+    MODEL       TEXT NOT NULL,
+    INDEXED_AT  TEXT NOT NULL,
+    PRIMARY KEY (FILE_PATH, CHUNK_INDEX)
+);
+CREATE INDEX mcp_embedding_hnsw_idx ON MCP_EMBEDDING
+    USING hnsw (EMBEDDING extensions.vector_cosine_ops);
+
+CREATE TABLE SUMMARY_CACHE (
+    SOURCE_URL TEXT NOT NULL PRIMARY KEY,
+    SUMMARY    TEXT NOT NULL,
+    CREATED_AT TEXT NOT NULL
+);
+
+CREATE TABLE ADD_CONTENT_QUEUE (
+    UUID        VARCHAR(60) NOT NULL PRIMARY KEY,
+    PAYLOAD     TEXT        NOT NULL,
+    RECEIVED_AT TEXT        NOT NULL,
+    ATTEMPTS    INTEGER     NOT NULL DEFAULT 0
+);
+
+INSERT INTO APPLICATION_METADATA (KEY, VALUE) VALUES ('database.version', '1');
+```
+
+### `digital-me-db-2.sql` (schema v2: widen TIME column)
+```sql
+-- Widen TEXT_ENTRY.TIME from VARCHAR(23) to TEXT to accommodate full-precision ISO-8601 timestamps
+-- (Instant.toString() can produce up to 30 characters with nanosecond precision)
+ALTER TABLE TEXT_ENTRY ALTER COLUMN TIME TYPE TEXT;
+
+INSERT INTO APPLICATION_METADATA (KEY, VALUE) VALUES ('database.version', '2')
+ON CONFLICT (KEY) DO UPDATE SET VALUE = '2';
 ```
 
 `TIME` and `INDEXED_AT` are stored as ISO-8601 instant strings (e.g. `2024-01-15T10:30:00Z`).
-`EMBEDDING` is a raw `BLOB` of packed IEEE 754 floats (4 bytes each, big-endian via `ByteBuffer`).
+
+`VECTOR(768)` is fixed to `nomic-embed-text`'s output dimension — the only supported embedding model. Changing `ollama.embedding.model` to a different-dimension model requires a new migration (`ALTER TABLE MCP_EMBEDDING ALTER COLUMN EMBEDDING TYPE vector(N)`), the same way `deleteByModelNot()` already discards and re-embeds on any model change today. `EMBEDDING` is queried via pgvector's `<=>` cosine-distance operator against an HNSW index (`mcp_embedding_hnsw_idx`), not loaded into application memory.
 
 ---
 
