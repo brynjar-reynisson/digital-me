@@ -21,6 +21,12 @@ public class SpringBootApplication {
                 .anyMatch(a -> a.startsWith("--digitalme.migrate-sqlite-path"));
         if (migrating) {
             builder.web(org.springframework.boot.WebApplicationType.NONE);
+            // Prevent the Camel file-watch/scheduler routes (FileChangeWatcher, ContentReceive)
+            // from loading during a migration run -- left enabled, they index newly-noticed local
+            // files into MCP_EMBEDDING/TEXT_ENTRY concurrently with the migrator's own bulk copy,
+            // racing it for the same primary keys. An include pattern matching no real path is the
+            // simplest way to make Camel load zero routes for this run.
+            builder.properties("camel.springboot.routes-include-pattern=file:no-routes-during-migration/*.xml");
         }
         builder.run(args);
     }

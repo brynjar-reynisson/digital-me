@@ -39,6 +39,7 @@ public class EmbeddingIndex {
     private final String documentPrefix;
     private final String queryPrefix;
     private final float minScore;
+    private final boolean migrating;
 
     @Autowired
     public EmbeddingIndex(
@@ -47,23 +48,31 @@ public class EmbeddingIndex {
             @Value("${ollama.embedding.model:" + DEFAULT_MODEL + "}") String model,
             @Value("${ollama.embedding.document-prefix:search_document:}") String documentPrefix,
             @Value("${ollama.embedding.query-prefix:search_query:}") String queryPrefix,
-            @Value("${semantic-search.min-score:0.5}") float minScore) {
+            @Value("${semantic-search.min-score:0.5}") float minScore,
+            @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath) {
         this.embeddingClient = embeddingClient;
         this.mcpResourcesDir = Paths.get(dataDir, ResourceReceiver.MCP_RESOURCES_DIR);
         this.model = model;
         this.documentPrefix = documentPrefix;
         this.queryPrefix = queryPrefix;
         this.minScore = minScore;
+        this.migrating = !migrateSqlitePath.isBlank();
     }
 
     /** Convenience constructor for tests: default model, no task prefixes, no score threshold. */
     public EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir) {
-        this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f);
+        this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f, "");
     }
 
-    /** Indexes any mcp-resources files not yet in the embedding table. Runs async at startup. */
+    /**
+     * Indexes any mcp-resources files not yet in the embedding table. Runs async at startup.
+     * Skipped during the one-time SQLite-to-Postgres migration run: this would otherwise
+     * re-embed the entire mcp-resources tree via Ollama concurrently with the migrator's own
+     * bulk copy of already-computed vectors into the same MCP_EMBEDDING table.
+     */
     @EventListener(ApplicationReadyEvent.class)
     public void indexAllOnStartup() {
+        if (migrating) return;
         Thread t = new Thread(this::indexAll, "embedding-indexer");
         t.setDaemon(true);
         t.start();

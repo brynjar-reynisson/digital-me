@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -48,17 +49,28 @@ public class ClaudeSessionIndexer {
     private final EmbeddingIndex embeddingIndex;
     private final Path mcpResourcesDir;
     private final Path claudeProjectsDir;
+    private final boolean migrating;
 
+    @Autowired
     public ClaudeSessionIndexer(EmbeddingIndex embeddingIndex, @Value("${data.dir:.}") String dataDir,
-            @Value("${claude.projects.dir:}") String claudeProjectsDir) {
+            @Value("${claude.projects.dir:}") String claudeProjectsDir,
+            @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath) {
         this.embeddingIndex = embeddingIndex;
         this.mcpResourcesDir = Paths.get(dataDir, ResourceReceiver.MCP_RESOURCES_DIR);
         this.claudeProjectsDir = claudeProjectsDir.isBlank() ? DEFAULT_CLAUDE_PROJECTS : Path.of(claudeProjectsDir);
+        this.migrating = !migrateSqlitePath.isBlank();
     }
 
+    /** Convenience constructor for tests: not in migration mode. */
+    public ClaudeSessionIndexer(EmbeddingIndex embeddingIndex, String dataDir, String claudeProjectsDir) {
+        this(embeddingIndex, dataDir, claudeProjectsDir, "");
+    }
+
+    // Skipped during the one-time SQLite-to-Postgres migration run: indexing new sessions here
+    // would race the migrator's own bulk copy into the same MCP_EMBEDDING table.
     @Scheduled(fixedDelay = 60_000)
     public void indexAll() {
-        if (!Files.isDirectory(claudeProjectsDir)) return;
+        if (migrating || !Files.isDirectory(claudeProjectsDir)) return;
         try (Stream<Path> walk = Files.walk(claudeProjectsDir, 2)) {
             walk.filter(Files::isRegularFile)
                 .filter(p -> p.toString().endsWith(".jsonl"))

@@ -164,7 +164,7 @@ class EmbeddingIndexTest {
                     if (text.contains("relevant content")) return v(1.0f, 0.0f);
                     return v(1.0f, 0.0f); // query
                 },
-                dataDir.toString(), "nomic-embed-text", "", "", 0.5f);
+                dataDir.toString(), "nomic-embed-text", "", "", 0.5f, "");
 
         index.indexFile(fileA);
         index.indexFile(fileB);
@@ -188,7 +188,7 @@ class EmbeddingIndexTest {
                     if (text.contains("Weak match")) return v(0.0f, 1.0f);
                     return v(1.0f, 0.0f); // query
                 },
-                dataDir.toString(), "nomic-embed-text", "", "", 0f);
+                dataDir.toString(), "nomic-embed-text", "", "", 0f, "");
 
         index.indexFile(file);
         List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
@@ -247,7 +247,7 @@ class EmbeddingIndexTest {
                     callCount.incrementAndGet();
                     return v(1.0f);
                 },
-                dataDir.toString(), "old-model", "", "", 0f);
+                dataDir.toString(), "old-model", "", "", 0f, "");
         oldModelIndex.indexAll();
         assertEquals(1, callCount.get());
 
@@ -256,7 +256,7 @@ class EmbeddingIndexTest {
                     callCount.incrementAndGet();
                     return v(1.0f);
                 },
-                dataDir.toString(), "new-model", "", "", 0f);
+                dataDir.toString(), "new-model", "", "", 0f, "");
         newModelIndex.indexAll();
 
         assertEquals(2, callCount.get(), "File should be re-embedded once the configured model changes");
@@ -274,7 +274,7 @@ class EmbeddingIndexTest {
                     captured[0] = text;
                     return v(1.0f);
                 },
-                dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f);
+                dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f, "");
 
         index.indexFile(file);
 
@@ -290,7 +290,7 @@ class EmbeddingIndexTest {
                     captured[0] = text;
                     return null;
                 },
-                dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f);
+                dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f, "");
 
         index.findSimilar("hello", 5);
 
