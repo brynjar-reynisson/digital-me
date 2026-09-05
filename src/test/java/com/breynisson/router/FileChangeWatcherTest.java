@@ -1,7 +1,7 @@
 package com.breynisson.router;
 
 import com.breynisson.router.digitalme.DefaultDigitalMeStorage;
-import com.breynisson.router.jdbc.DatabaseAdapter;
+import com.breynisson.router.jdbc.PostgresTestSupport;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.lucene.LuceneIndex;
 import com.breynisson.router.mcp.EmbeddingIndex;
@@ -20,8 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class FileChangeWatcherTest {
 
-    @TempDir
-    static Path dbDir;
+    static String schema;
 
     @TempDir
     Path tempDir;
@@ -36,13 +35,12 @@ class FileChangeWatcherTest {
 
     @BeforeAll
     static void setUpDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(dbDir.resolve("test.db").toString());
-        DatabaseAdapter.init();
+        schema = PostgresTestSupport.createIsolatedSchema("filechangewatcher");
     }
 
     @AfterAll
     static void tearDownDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(null);
+        PostgresTestSupport.dropSchema(schema);
     }
 
     @BeforeEach

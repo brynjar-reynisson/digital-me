@@ -1,6 +1,6 @@
 package com.breynisson.router;
 
-import com.breynisson.router.jdbc.DatabaseAdapter;
+import com.breynisson.router.jdbc.PostgresTestSupport;
 import com.breynisson.router.jdbc.TextEntryDao;
 
 import org.apache.camel.CamelContext;
@@ -31,6 +31,8 @@ public class SpringBootApplicationTest {
 	@TempDir
 	static Path dataDir;
 
+	private static String schema;
+
 	@DynamicPropertySource
 	static void overrideProperties(DynamicPropertyRegistry registry) throws URISyntaxException {
 		// ClaudeSessionIndexer's @Scheduled job runs as part of this full context. Left pointed at
@@ -41,14 +43,16 @@ public class SpringBootApplicationTest {
 		Path fixtureDir = Paths.get(SpringBootApplicationTest.class.getClassLoader()
 				.getResource("claude-projects-fixture").toURI());
 		registry.add("claude.projects.dir", fixtureDir::toString);
+
+		// Isolate this full-context test's Postgres schema from real dev data and from every
+		// other test class, the same way data.dir isolates its file-based state above.
+		schema = "springbootapplicationtest_" + java.util.UUID.randomUUID().toString().replace("-", "");
+		registry.add("postgres.schema", () -> schema);
 	}
 
 	@AfterAll
 	static void tearDownDatabase() {
-		// AppConfig points DatabaseAdapter at data.dir/digital-me.db on context startup; without
-		// closing it here, the open SQLite connection blocks JUnit from deleting the static
-		// @TempDir on Windows.
-		DatabaseAdapter.setDefaultDatabasePath(null);
+		PostgresTestSupport.dropSchema(schema);
 	}
 
 	@Autowired

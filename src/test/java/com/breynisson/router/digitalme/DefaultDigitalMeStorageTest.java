@@ -1,7 +1,7 @@
 package com.breynisson.router.digitalme;
 
-import com.breynisson.router.jdbc.DatabaseAdapter;
 import com.breynisson.router.jdbc.McpEmbeddingDao;
+import com.breynisson.router.jdbc.PostgresTestSupport;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.jdbc.model.McpEmbedding;
 import com.breynisson.router.lucene.LuceneIndex;
@@ -12,7 +12,6 @@ import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -25,8 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class DefaultDigitalMeStorageTest {
 
-    @TempDir
-    static Path dbDir;
+    static String schema;
 
     @TempDir
     static Path dataDir;
@@ -38,13 +36,12 @@ class DefaultDigitalMeStorageTest {
 
     @BeforeAll
     static void setUpDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(dbDir.resolve("test.db").toString());
-        DatabaseAdapter.init();
+        schema = PostgresTestSupport.createIsolatedSchema("defaultdigitalmestorage");
     }
 
     @AfterAll
     static void tearDownDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(null);
+        PostgresTestSupport.dropSchema(schema);
     }
 
     @BeforeEach
@@ -80,10 +77,23 @@ class DefaultDigitalMeStorageTest {
         }
     }
 
-    private static byte[] fakeEmbeddingBytes() {
-        ByteBuffer buf = ByteBuffer.allocate(Float.BYTES);
-        buf.putFloat(1.0f);
-        return buf.array();
+    /**
+     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(768) NOT NULL (digital-me-db-1.sql) and
+     * pgvector enforces that exact dimension on insert. Test vectors below are zero-padded to 768
+     * dims via {@link #v}; zero-padding both sides of a cosine comparison leaves the dot product and
+     * magnitude (and so the cosine score) identical to the unpadded vectors, so this doesn't change
+     * what any test asserts.
+     */
+    private static final int DIMENSIONS = 768;
+
+    private static float[] v(float... values) {
+        float[] padded = new float[DIMENSIONS];
+        System.arraycopy(values, 0, padded, 0, values.length);
+        return padded;
+    }
+
+    private static float[] fakeEmbeddingBytes() {
+        return v(1.0f);
     }
 
     @Test
@@ -729,7 +739,7 @@ class DefaultDigitalMeStorageTest {
                 secondStarted.countDown();
             }
             concurrentEmbeds.decrementAndGet();
-            return new float[]{1f, 0f};
+            return v(1f, 0f);
         };
         DefaultDigitalMeStorage boundedStorage = new DefaultDigitalMeStorage(
                 dataDir.toString(), new EmbeddingIndex(client, dataDir.toString()), 1);
@@ -762,7 +772,7 @@ class DefaultDigitalMeStorageTest {
             bothStarted.countDown();
             awaitQuietly(release);
             concurrentEmbeds.decrementAndGet();
-            return new float[]{1f, 0f};
+            return v(1f, 0f);
         };
         DefaultDigitalMeStorage twoWorkerStorage = new DefaultDigitalMeStorage(
                 dataDir.toString(), new EmbeddingIndex(client, dataDir.toString()), 2);

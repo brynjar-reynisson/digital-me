@@ -1,6 +1,6 @@
 package com.breynisson.router;
 
-import com.breynisson.router.jdbc.DatabaseAdapter;
+import com.breynisson.router.jdbc.PostgresTestSupport;
 import com.breynisson.router.jdbc.SummaryCacheDao;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.mcp.EmbeddingIndex;
@@ -19,21 +19,35 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ClaudeSessionIndexerTest {
 
-    @TempDir
-    static Path dbDir;
+    static String schema;
 
     @TempDir
     Path dataDir;
 
     @BeforeAll
     static void setUpDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(dbDir.resolve("test.db").toString());
-        DatabaseAdapter.init();
+        schema = PostgresTestSupport.createIsolatedSchema("claudesessionindexer");
     }
 
     @AfterAll
     static void tearDownDatabase() {
-        DatabaseAdapter.setDefaultDatabasePath(null);
+        PostgresTestSupport.dropSchema(schema);
+    }
+
+    /**
+     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(768) NOT NULL (digital-me-db-1.sql) and
+     * pgvector enforces that exact dimension on insert. The EmbeddingClient lambda below returns a
+     * short test vector for readability, so it's zero-padded to 768 dims via {@link #v} before
+     * EmbeddingIndex normalizes/stores it. Zero-padding both sides of a cosine comparison leaves the
+     * dot product and magnitude (and so the cosine score) identical to the unpadded vectors, so this
+     * doesn't change what any test asserts.
+     */
+    private static final int DIMENSIONS = 768;
+
+    private static float[] v(float... values) {
+        float[] padded = new float[DIMENSIONS];
+        System.arraycopy(values, 0, padded, 0, values.length);
+        return padded;
     }
 
     @Test
@@ -111,7 +125,7 @@ class ClaudeSessionIndexerTest {
         AtomicInteger embedCalls = new AtomicInteger();
         EmbeddingIndex embeddingIndex = new EmbeddingIndex(text -> {
             embedCalls.incrementAndGet();
-            return new float[]{1f, 0f};
+            return v(1f, 0f);
         }, dataDir.toString());
         ClaudeSessionIndexer indexer = new ClaudeSessionIndexer(embeddingIndex, dataDir.toString(),
                 claudeProjectsDir.toString());

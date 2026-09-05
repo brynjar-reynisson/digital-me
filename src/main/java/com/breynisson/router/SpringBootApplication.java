@@ -1,8 +1,15 @@
 package com.breynisson.router;
 
 import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 
-@org.springframework.boot.autoconfigure.SpringBootApplication
+// DataSourceAutoConfiguration is excluded because DatabaseAdapter manages its own HikariCP
+// DataSource directly (see DatabaseAdapter.configure()/rebuildDataSource()) rather than exposing
+// a Spring-managed javax.sql.DataSource bean. Without this exclusion, spring-boot-starter-jdbc
+// (pulled in for HikariCP) makes Spring Boot try to auto-configure its own DataSource bean from
+// spring.datasource.* properties, which don't exist (this app uses postgres.* instead) -- that
+// failure only surfaces when a full ApplicationContext is built, e.g. in SpringBootApplicationTest.
+@org.springframework.boot.autoconfigure.SpringBootApplication(exclude = DataSourceAutoConfiguration.class)
 public class SpringBootApplication {
 
     /**
