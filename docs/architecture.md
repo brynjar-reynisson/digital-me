@@ -119,10 +119,19 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 
 ### `SummarizeClient` (functional interface)
 - Single method: `String summarize(String text)` — returns `null` when the backend is unavailable
-- Used as a lambda in tests; two production implementations exist, selected via `summarize.provider` (`deepseek` default, `matchIfMissing = true`; or `ollama`), each `@ConditionalOnProperty`-gated so exactly one is registered as a Spring bean
+- Used as a lambda in tests; production implementations (`GeminiSummarizeClient`, `DeepseekSummarizeClient`, `OllamaSummarizeClient`, `FallbackSummarizeClient`) are plain classes with no Spring annotations, wired up by `AppConfig.summarizeClient()`, which reads `summarize.provider` (`gemini` default) and constructs: `gemini` → `FallbackSummarizeClient` wrapping `GeminiSummarizeClient` (primary) and `DeepseekSummarizeClient` (fallback); `deepseek` → `DeepseekSummarizeClient` alone; `ollama` → `OllamaSummarizeClient` alone. Exactly one `SummarizeClient` bean exists in the context either way
+
+### `GeminiSummarizeClient`
+- Default fast summarization backend; posts to Google's free-tier Gemini API (`{gemini.api.base-url}/v1beta/models/{model}:generateContent`, model configurable via `gemini.summarize.model`, default `gemini-2.5-flash-lite`), with the API key sent via the `x-goog-api-key` header rather than the URL, so it never lands in logs
+- `gemini.api.key` resolves the `GEMINI_API_KEY` env var first, falling back to an existing `GOOGLE_API_KEY` (e.g. from another project) if set — an incompatible key simply causes calls to fail and fall back to DeepSeek, exactly as if no key were configured at all
+- Returns `null` immediately (no HTTP call made) when the resolved API key is blank, and also on any non-200 response (including a 429 rate-limit), a timeout (`gemini.summarize.timeout-seconds`, default 20s), or a network failure
+- `isAvailable()` does a lightweight `GET {gemini.api.base-url}/v1beta/models` reachability check rather than spending a full summarization call against the free tier's daily quota
+
+### `FallbackSummarizeClient`
+- Wraps a primary and a fallback `SummarizeClient`; `summarize()` tries the primary first and only calls the fallback when the primary returns `null`. `isAvailable()` is `primary.isAvailable() || fallback.isAvailable()`. Composes `GeminiSummarizeClient` (primary) with `DeepseekSummarizeClient` (fallback) to form the default `summarize.provider=gemini` behavior
 
 ### `DeepseekSummarizeClient`
-- Default summarization backend; shells out to the `opencode` CLI: `opencode run --model <model> --format json "<prompt>"` (model configurable via `opencode.summarize.model`, default `deepseek/deepseek-v4-flash`)
+- Fallback summarization backend by default (used directly only when `summarize.provider=deepseek`); shells out to the `opencode` CLI: `opencode run --model <model> --format json "<prompt>"` (model configurable via `opencode.summarize.model`, default `deepseek/deepseek-v4-flash`)
 - `opencode.command` defaults to `opencode.cmd`, not `opencode` — on Windows, `ProcessBuilder` does not do `cmd.exe`-style PATHEXT resolution of bare command names, so the npm `.cmd` shim must be named explicitly
 - Sends the same "Summarize in 2-3 sentences" instruction as `OllamaSummarizeClient`, but with a single-line `": "` separator instead of `":\n\n"` — `opencode.cmd` runs through `cmd.exe`, which truncates an argument at an embedded newline
 - Since `text` can originate from arbitrary scraped web pages and becomes a `cmd.exe`-routed argument, `sanitizeArgument()` strips characters `cmd.exe` treats specially (`& | < > ^ " %`, plus CR/LF) before building the prompt
