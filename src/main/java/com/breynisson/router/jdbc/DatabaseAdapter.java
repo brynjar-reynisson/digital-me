@@ -82,13 +82,19 @@ public class DatabaseAdapter {
         if (dataSource == null) {
             rebuildDataSource();
         }
+        Connection connection;
         try {
-            Connection connection = dataSource.getConnection();
-            PGvector.addVectorType(connection);
-            return connection;
+            connection = dataSource.getConnection();
         } catch (SQLException e) {
             throw new RouterException(e);
         }
+        try {
+            PGvector.addVectorType(connection);
+        } catch (SQLException e) {
+            safeClose(connection);
+            throw new RouterException(e);
+        }
+        return connection;
     }
 
     public static void safeClose(AutoCloseable... closeables) {

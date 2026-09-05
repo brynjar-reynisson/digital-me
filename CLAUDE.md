@@ -52,14 +52,13 @@ digital-me/
 │   ├── ContentReceive.java          Camel processor for file:content-receive route
 │   ├── jdbc/
 │   │   ├── DatabaseAdapter.java     Postgres connection pool (HikariCP) + schema management
-│   │   ├── PostgresTestSupport.java Postgres test schema isolation
 │   │   ├── TextEntryDao.java        CRUD for TEXT_ENTRY table
 │   │   ├── TextEntryMetadataDao.java
 │   │   ├── ApplicationMetadataDao.java
 │   │   ├── McpEmbeddingDao.java     pgvector queries with DISTINCT ON + scoring
-│   │   ├── migration/
-│   │   │   └── SqliteToPostgresMigrator.java One-time migration from legacy SQLite data
 │   │   └── model/                  TextEntry, TextEntryMetadata, McpEmbedding POJOs
+│   ├── migration/
+│   │   └── SqliteToPostgresMigrator.java One-time migration from legacy SQLite data
 │   ├── lucene/
 │   │   └── LuceneIndex.java         Static Lucene index helpers
 │   ├── mcp/
@@ -71,7 +70,7 @@ digital-me/
 │   │   ├── SummarizeClient.java     Functional interface: String summarize(String text)
 │   │   └── OllamaSummarizeClient.java  HTTP client for Ollama /api/generate (llama3.2)
 │   ├── digitalme/
-│   │   ├── DigitalMeStorage.java    Abstraction over Lucene index + SQLite
+│   │   ├── DigitalMeStorage.java    Abstraction over Lucene index + Postgres
 │   │   ├── DefaultDigitalMeStorage.java
 │   │   ├── SemanticSearch.java      EmbeddingIndex + SummarizeClient; search + snippet + summarize
 │   │   ├── ExclusionRules.java      Filters noisy sources from search results
@@ -85,8 +84,8 @@ digital-me/
 │       └── IndexPage.java           REST controller (@RestController)
 ├── src/main/resources/
 │   ├── application.properties
-│   ├── digital-me-db-1.sql          DB migration script (schema v1: TEXT_ENTRY tables)
-│   ├── digital-me-db-2.sql          DB migration script (schema v2: MCP_EMBEDDING table)
+│   ├── digital-me-db-1.sql          DB migration script (full Postgres schema: all tables + `vector` extension + HNSW index)
+│   ├── digital-me-db-2.sql          DB migration script (widens TEXT_ENTRY.TIME column)
 │   └── static/                      Built frontend assets (committed to git)
 ├── checkstyle.xml                   Checkstyle rules (unused imports, equals-avoid-null, etc.)
 └── .claude/
