@@ -4,9 +4,7 @@ import com.breynisson.router.jdbc.model.TextEntry;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -15,18 +13,16 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class TextEntryDaoTest {
 
-    @TempDir
-    static Path dbDir;
+    static String schema;
 
     @BeforeAll
     static void setUp() {
-        DatabaseAdapter.setDefaultDatabasePath(dbDir.resolve("digital-me.db").toString());
-        DatabaseAdapter.init();
+        schema = PostgresTestSupport.createIsolatedSchema("textentrydao");
     }
 
     @AfterAll
     static void tearDown() {
-        DatabaseAdapter.setDefaultDatabasePath(null);
+        PostgresTestSupport.dropSchema(schema);
     }
 
     @Test
