@@ -26,6 +26,7 @@ import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -71,16 +72,31 @@ public class IndexPage {
         int indexedFiles = McpEmbeddingDao.countIndexedFiles();
         int totalChunks = McpEmbeddingDao.countTotalChunks();
         int totalFilesOnDisk = embeddingIndex.countFilesOnDisk();
-        double coveragePercent = totalFilesOnDisk > 0
-                ? Math.round(indexedFiles * 1000.0 / totalFilesOnDisk) / 10.0
-                : 100.0;
+        double coveragePercent = roundedPercent(indexedFiles, totalFilesOnDisk);
 
-        return Map.of(
-                "indexedFiles", indexedFiles,
-                "totalChunks", totalChunks,
-                "totalFilesOnDisk", totalFilesOnDisk,
-                "coveragePercent", coveragePercent
-        );
+        Map<String, Object> health = new LinkedHashMap<>();
+        health.put("indexedFiles", indexedFiles);
+        health.put("totalChunks", totalChunks);
+        health.put("totalFilesOnDisk", totalFilesOnDisk);
+        health.put("coveragePercent", coveragePercent);
+        embeddingIndex.migrationStatus().ifPresent(status -> health.put("migration", migrationProgress(status)));
+        return health;
+    }
+
+    private static Map<String, Object> migrationProgress(McpEmbeddingDao.MigrationStatus status) {
+        Map<String, Object> migration = new LinkedHashMap<>();
+        migration.put("migratedFiles", status.migratedFiles());
+        migration.put("remainingFiles", status.remainingFiles());
+        migration.put("migratedChunks", status.migratedChunks());
+        migration.put("remainingChunks", status.remainingChunks());
+        migration.put("percentMigrated", roundedPercent(status.migratedChunks(),
+                status.migratedChunks() + status.remainingChunks()));
+        return migration;
+    }
+
+    /** part/total as a percentage rounded to one decimal; 100.0 when total is zero (nothing to be behind on). */
+    private static double roundedPercent(int part, int total) {
+        return total > 0 ? Math.round(part * 1000.0 / total) / 10.0 : 100.0;
     }
 
     @GetMapping("/search")
