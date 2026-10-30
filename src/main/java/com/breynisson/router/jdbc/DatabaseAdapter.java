@@ -226,6 +226,34 @@ public class DatabaseAdapter {
         return true;
     }
 
+    @FunctionalInterface
+    public interface TransactionBody<T> {
+        T run(Connection c) throws SQLException;
+    }
+
+    /**
+     * Runs body on one connection with autocommit off: commits when it returns, rolls back and
+     * rethrows as RouterException on any exception.
+     */
+    public static <T> T inTransaction(TransactionBody<T> body) {
+        Connection c = getConnection();
+        try {
+            c.setAutoCommit(false);
+            T result = body.run(c);
+            c.commit();
+            return result;
+        } catch (Exception e) {
+            try {
+                c.rollback();
+            } catch (SQLException rollbackFailure) {
+                e.addSuppressed(rollbackFailure);
+            }
+            throw new RouterException("Transaction failed", e);
+        } finally {
+            safeClose(c);
+        }
+    }
+
     public static void runPreparedStatement(String sql, Object... params) {
 
         Connection c = null;

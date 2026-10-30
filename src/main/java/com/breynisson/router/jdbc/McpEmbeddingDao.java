@@ -11,7 +11,8 @@ import java.util.Set;
 
 public class McpEmbeddingDao {
 
-    private static final String TABLE = "MCP_EMBEDDING";
+    public static final String TABLE = "MCP_EMBEDDING";
+    public static final String TABLE_V2 = "MCP_EMBEDDING_V2";
     private static final McpEmbedding.ResultSetTransform TRANSFORM = new McpEmbedding.ResultSetTransform();
     private static final ScoredMatchTransform SCORED_MATCH_TRANSFORM = new ScoredMatchTransform();
 
@@ -28,26 +29,38 @@ public class McpEmbeddingDao {
     }
 
     public static void upsert(McpEmbedding embedding) {
+        upsert(TABLE, embedding);
+    }
+
+    public static void upsert(String table, McpEmbedding embedding) {
+        // Re-embedding a row in the legacy table invalidates any earlier migration of that file
+        String resetMarker = table.equals(TABLE) ? ", MIGRATED_AT = NULL" : "";
         DatabaseAdapter.runPreparedStatement(
-                "INSERT INTO " + TABLE + " (FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING, MODEL, INDEXED_AT) "
+                "INSERT INTO " + table + " (FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING, MODEL, INDEXED_AT) "
               + "VALUES (?, ?, ?, ?, ?, ?, ?) "
               + "ON CONFLICT (FILE_PATH, CHUNK_INDEX) DO UPDATE SET "
               + "SOURCE_URL = EXCLUDED.SOURCE_URL, CHUNK_TEXT = EXCLUDED.CHUNK_TEXT, EMBEDDING = EXCLUDED.EMBEDDING, "
-              + "MODEL = EXCLUDED.MODEL, INDEXED_AT = EXCLUDED.INDEXED_AT",
+              + "MODEL = EXCLUDED.MODEL, INDEXED_AT = EXCLUDED.INDEXED_AT" + resetMarker,
                 embedding.filePath, embedding.chunkIndex, embedding.sourceUrl, embedding.chunkText,
                 new PGvector(embedding.embedding), embedding.model, embedding.indexedAt);
     }
 
     public static void deleteByFilePath(String filePath) {
         DatabaseAdapter.runPreparedStatement("DELETE FROM " + TABLE + " WHERE FILE_PATH = ?", filePath);
+        DatabaseAdapter.runPreparedStatement("DELETE FROM " + TABLE_V2 + " WHERE FILE_PATH = ?", filePath);
     }
 
     public static void deleteBySourceUrl(String sourceUrl) {
         DatabaseAdapter.runPreparedStatement("DELETE FROM " + TABLE + " WHERE SOURCE_URL = ?", sourceUrl);
+        DatabaseAdapter.runPreparedStatement("DELETE FROM " + TABLE_V2 + " WHERE SOURCE_URL = ?", sourceUrl);
     }
 
     public static void deleteByModelNot(String currentModel) {
-        DatabaseAdapter.runPreparedStatement("DELETE FROM " + TABLE + " WHERE MODEL <> ?", currentModel);
+        deleteByModelNot(TABLE, currentModel);
+    }
+
+    public static void deleteByModelNot(String table, String currentModel) {
+        DatabaseAdapter.runPreparedStatement("DELETE FROM " + table + " WHERE MODEL <> ?", currentModel);
     }
 
     public static int countIndexedFiles() {
@@ -69,6 +82,15 @@ public class McpEmbeddingDao {
      * single best-scoring chunk, filtered to scores >= minScore, ranked best-first.
      */
     public static List<ScoredMatch> findSimilar(float[] queryVector, float minScore, int topK) {
+        return findSimilar(TABLE, queryVector, minScore, topK, false);
+    }
+
+    /**
+     * Table-parametrised variant. When unmigratedOnly is true, rows already copied into
+     * MCP_EMBEDDING_V2 (MIGRATED_AT set) are skipped; only meaningful for the legacy table.
+     */
+    public static List<ScoredMatch> findSimilar(String table, float[] queryVector, float minScore, int topK,
+                                                boolean unmigratedOnly) {
         // The vector extension (and its <=> operator) is installed into the "extensions" schema
         // (digital-me-db-1.sql), not "public" — and this DAO's connections run with search_path
         // set to just the app/test schema (DatabaseAdapter/PostgresTestSupport), so the bare
@@ -80,7 +102,8 @@ public class McpEmbeddingDao {
                 "SELECT file_path, source_url, chunk_text, score FROM ("
               + "  SELECT DISTINCT ON (source_url) file_path, source_url, chunk_text, "
               + "         1 - (embedding OPERATOR(extensions.<=>) ?) AS score "
-              + "  FROM " + TABLE + " "
+              + "  FROM " + table + " "
+              + (unmigratedOnly ? "  WHERE MIGRATED_AT IS NULL " : "")
               + "  ORDER BY source_url, embedding OPERATOR(extensions.<=>) ?"
               + ") best_per_source "
               + "WHERE score >= ? "
