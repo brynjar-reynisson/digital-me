@@ -10,7 +10,7 @@
 | `POST` | `/summarize` | On-demand text summarization; body: `{ text }`; returns `{ summary }` |
 | `GET` | `/localFile?filePath=...` | Reads a local file; `.md`/`.markdown` files are rendered as formatted HTML via `MarkdownPageRenderer` (CommonMark GFM with tables/strikethrough/task-lists; raw HTML in source is escaped); all other file types return HTML-escaped plain text. `filePath` is normally an actual filesystem path, but semantic search results for synthetic sources (e.g. `claude://` Claude Code session URLs, which are never real paths) put that source identifier here instead — recognized by a non-`http(s)` URI scheme prefix and resolved via `McpEmbeddingDao.findFilePathsBySourceUrl()` to the indexed mcp-resources file. Since `filePath` is a raw caller-supplied query parameter, `resolveFilePath()` rejects it outright if it looks like a UNC/network path (`\\host\share\...`) — otherwise reading it would force Windows to open an SMB session to whatever host the caller names, leaking NTLM credentials — and otherwise requires it to already match a `TEXT_ENTRY` the app itself indexed (via `FileChangeWatcher` or `/addContent`), returning 403 for anything else; this narrows the endpoint from "read any file the JVM can access" down to "read files this app already knows about". The server also binds to `127.0.0.1` only (`server.address` in `application.properties`), since this is a documented single-user local tool with no reason to accept LAN connections |
 | `POST` | `/addContent` | Durably queues content for async indexing; body: `{ source, name, content }`; returns `{ success: true }` as soon as the raw request is persisted to `ADD_CONTENT_QUEUE` — not once indexing has actually completed |
-| `GET` | `/health/index` | Embedding index coverage snapshot; returns `{ indexedFiles, totalChunks, totalFilesOnDisk, coveragePercent }` — `indexedFiles`/`totalChunks` come from `MCP_EMBEDDING` (`McpEmbeddingDao.countIndexedFiles()`/`countTotalChunks()`), `totalFilesOnDisk` is a live recursive walk of `mcp-resources/` (`EmbeddingIndex.countFilesOnDisk()`), and `coveragePercent` is `indexedFiles / totalFilesOnDisk * 100` rounded to one decimal, or `100.0` when `totalFilesOnDisk` is `0` (nothing to be behind on) rather than dividing by zero. A lightweight instantaneous read — no caching, no background thread — since even a few thousand files cost only milliseconds to walk |
+| `GET` | `/health/index` | Embedding index coverage snapshot; returns `{ indexedFiles, totalChunks, totalFilesOnDisk, coveragePercent }` (plus a `migration` object when `embedding.v2.enabled=true`: `{ migratedFiles, remainingFiles, migratedChunks, remainingChunks, percentMigrated }`, from `McpEmbeddingDao.migrationStatus()` — `percentMigrated` is `migratedChunks / (migratedChunks + remainingChunks) * 100` rounded to one decimal, `100.0` when there are no chunks; omitted entirely when v2 is disabled) — `indexedFiles`/`totalChunks` come from `MCP_EMBEDDING` (`McpEmbeddingDao.countIndexedFiles()`/`countTotalChunks()`), `totalFilesOnDisk` is a live recursive walk of `mcp-resources/` (`EmbeddingIndex.countFilesOnDisk()`), and `coveragePercent` is `indexedFiles / totalFilesOnDisk * 100` rounded to one decimal, or `100.0` when `totalFilesOnDisk` is `0` (nothing to be behind on) rather than dividing by zero. A lightweight instantaneous read — no caching, no background thread — since even a few thousand files cost only milliseconds to walk |
 
 HTTP submissions to `/addContent` (Chrome extension, screenshot-OCR pipeline) are durably queued rather than processed inline: `IndexPage.addContent()` serializes the request to JSON, inserts it into the `ADD_CONTENT_QUEUE` table via `AddContentQueueDao`, and returns success immediately — the only durable step in the request path is that single Postgres insert, so a crash mid-request can lose at most one not-yet-queued submission rather than one mid-pipeline submission. `AddContentQueueProcessor` (`@Scheduled(fixedDelay = 2000)`) polls the queue and, for each entry, deserializes the payload and calls `DigitalMeStorage.addContent()` (the pipeline described below), deleting the row only after that call returns — so a crash mid-processing leaves the row for the next poll (after restart) to retry, the same principle `FileChangeWatcher` already relies on for its own re-scans. A payload that fails outright (e.g. corrupt JSON) increments an `ATTEMPTS` counter and is dropped with a logged error after 5 failed attempts rather than retried forever. `FileChangeWatcher` is unaffected by any of this — it still calls `DigitalMeStorage.addContent()` directly, in-process, since it's already self-healing via its own mtime-vs-`TEXT_ENTRY.TIME` comparison, independent of `addContent()`'s internals.
 
@@ -56,7 +56,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - `getConnection()` returns a pooled connection from HikariCP; registers pgvector type support via `PGvector.addVectorType(connection)`
 - `init()` must be called at startup — runs numbered migration scripts from classpath (`digital-me-db-N.sql`)
 - Migration tracking: `APPLICATION_METADATA` table with `database.version` key
-- To add a migration: create `src/main/resources/digital-me-db-3.sql` (next number after the existing two — check the highest existing `digital-me-db-N.sql` before picking a number)
+- To add a migration: create `src/main/resources/digital-me-db-4.sql` (next number after the existing three — check the highest existing `digital-me-db-N.sql` before picking a number)
 
 ### `TextEntryDao`
 - `NAME` column stores the file absolute path or URL (`source`)
@@ -90,6 +90,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - `indexFile(path)`: reads the file, splits the body into ~2000-char sentence-boundary-aware chunks via `Chunker`, embeds each chunk (prefixed with `ollama.embedding.document-prefix`), normalizes to unit length, and stores one row per chunk in `MCP_EMBEDDING` via `McpEmbeddingDao.upsert()`
 - `findSimilar(query, topK)`: embeds the (prefixed) query, normalizes to unit length, delegates directly to `McpEmbeddingDao.findSimilar(queryVector, minScore, topK)` for SQL-side scoring via pgvector's `<=>` operator. Deduplication to each **source URL's** best-scoring chunk happens in the SQL `DISTINCT ON (source_url)` clause — a source resubmitted under a different physical file path still collapses to one result
 - `indexAll()` additionally reconciles the table on each run: deletes rows for files no longer on disk, and deletes rows whose `MODEL` doesn't match the currently configured `ollama.embedding.model` (both get re-embedded on the same pass)
+- **bge-m3 migration (only when `embedding.v2.enabled=true`, i.e. a `V2Settings` bean exists):** `indexFile()` dual-writes — each chunk is embedded with both nomic-embed-text and bge-m3 (using `embedding.v2.document-prefix`), then stored via `McpEmbeddingDao.upsertDual()` in one transaction into `MCP_EMBEDDING` (rows already marked `MIGRATED_AT`) and `MCP_EMBEDDING_V2`. If the bge-m3 embed returns `null` the file is written to the legacy table only, unmarked, and `EmbeddingMigrator` catches it up later. `findSimilar()` queries both tables (the legacy side with `unmigratedOnly=true`, so already-migrated rows aren't counted twice; the v2 side using `embedding.v2.min-score`) and combines the two ranked lists with reciprocal rank fusion (`RRF_K = 60`, keyed on source URL; each fused result keeps the chunk/score from the side where it ranked best). If either side's query fails or its embedding is unavailable, the other side's results are still used. `migrationStatus()` returns the migration counts (empty when v2 is disabled). With v2 disabled, behaviour is exactly the legacy single-table search
 - `countFilesOnDisk()` — recursive count of regular files under `mcp-resources/` (reuses the same walk as `listFilePaths()`, counting instead of collecting); returns `0` if the directory doesn't exist. Backs the `totalFilesOnDisk` figure in `/health/index`
 
 ### `McpEmbeddingDao`
@@ -99,7 +100,22 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - `deleteByFilePath(filePath)` — deletes all chunk rows for a file (used to reconcile deleted files)
 - `deleteByModelNot(currentModel)` — deletes rows whose `MODEL` doesn't match the currently configured embedding model
 - `findFilePathsBySourceUrl(sourceUrl)` / `deleteBySourceUrl(sourceUrl)` — used by `ResourceReceiver.deleteExistingFor()` (see below) to find and remove all chunk rows for a given source in one indexed lookup, rather than walking `mcp-resources/` on every submission
+- **Table-parametrised operations (bge-m3 migration):** `upsert`, `findSimilar` and `deleteByModelNot` take a table name (`McpEmbeddingDao.TABLE` = `MCP_EMBEDDING`, `TABLE_V2` = `MCP_EMBEDDING_V2`); the legacy overloads delegate with `TABLE`. Upserting a legacy-table row resets its `MIGRATED_AT` to `NULL` (re-embedded content must be re-migrated). `findSimilar(table, vec, minScore, topK, unmigratedOnly)` can skip rows with `MIGRATED_AT` set. `deleteByFilePath`/`deleteBySourceUrl` now delete from both tables, so reindexing or removing a source leaves no stale v2 rows
+- `findNextUnmigratedFilePaths(limit)` / `findUnmigratedChunks(filePath)` — drive `EmbeddingMigrator` (backed by the partial index on `MIGRATED_AT IS NULL`)
+- `commitMigration(filePath, rows, migratedAt)` — one transaction (`DatabaseAdapter.inTransaction`): upserts the v2 rows and marks the legacy rows migrated, but per-row only where the legacy row's `CHUNK_TEXT` still equals the migrated chunk's text; returns `false` (rolling back) if the file changed or vanished mid-migration, so stale embeddings are never marked as done
+- `upsertDual(oldRows, v2Rows, migratedAt)` — atomic dual-write used by `EmbeddingIndex.indexFile()`
+- `migrationStatus()` — `MigrationStatus(migratedFiles, remainingFiles, migratedChunks, remainingChunks)` from `MIGRATED_AT` counts; backs the `migration` block in `/health/index`
 - `countIndexedFiles()` / `countTotalChunks()` — `SELECT COUNT(DISTINCT FILE_PATH)` / `SELECT COUNT(*)` against `MCP_EMBEDDING`; back the `/health/index` endpoint (see REST API table above)
+
+### `EmbeddingMigrator`
+- Spring `@Component` that exists only when `embedding.v2.enabled=true`. On `ApplicationReadyEvent` it starts a daemon thread (`embedding-migrator`) that gradually backfills `MCP_EMBEDDING_V2` from the legacy `MCP_EMBEDDING` table; it is skipped entirely when `digitalme.migrate-sqlite-path` is set (the one-shot SQLite migration run)
+- Loop: `migrateBatch(25)` — takes up to 25 unmigrated files (`findNextUnmigratedFilePaths`), re-embeds each file's stored `CHUNK_TEXT`s with bge-m3 (`embedding.v2.document-prefix`), normalizes, and calls `commitMigration()`. If a batch commits nothing (nothing left, Ollama down, or every file failing) it sleeps 30 s before retrying, so it idles cheaply once migration is complete and picks up any files later written unmarked
+- Failure handling: a file whose embed returns `null` or whose commit is rejected (chunk text changed meanwhile) is simply left unmarked and retried. After 3 consecutive failures (`PENALTY_THRESHOLD`) a file goes into a penalty box and is skipped for 10 minutes (`PENALTY`), so a few permanently failing files cannot starve the ones behind them
+- Time is read through an injectable `java.time.Clock` (package-private constructor `EmbeddingMigrator(V2Settings, Clock)`) so tests can exercise the penalty window without sleeping
+- Migrated rows are retained: they stay in `MCP_EMBEDDING` (marked with `MIGRATED_AT`) until a later cleanup migration (`digital-me-db-4.sql`) drops the old table after a soak period — **not implemented yet**
+- Operational notes: requires `ollama pull bge-m3`. On Windows with an Intel iGPU, set the user environment variable `OLLAMA_IGPU_ENABLE=1` and restart Ollama — measured ~3.6x faster for bge-m3 (~0.8 s vs ~2.8 s per chunk on CPU). A full re-embed of ~126k chunks takes roughly a day even on the iGPU
+- **Known limitation:** changing `embedding.v2.model` after migration has begun is not handled automatically (unlike `ollama.embedding.model`, where `deleteByModelNot()` reconciles). It needs a manual reset: `UPDATE MCP_EMBEDDING SET MIGRATED_AT = NULL; TRUNCATE MCP_EMBEDDING_V2;`
+- `embedding.v2.min-score` defaults to `0.35` — a **provisional** value that has not yet been calibrated against live Icelandic queries; tune it once enough content has been migrated
 
 ### `SummaryCacheDao`
 - `find(sourceUrl)` — returns the cached summary for a source, or `null` if not cached
@@ -175,7 +191,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 
 ## Database schema
 
-Postgres (via `digital-me-db-1.sql` and `digital-me-db-2.sql`, run in order):
+Postgres (via `digital-me-db-1.sql`, `digital-me-db-2.sql` and `digital-me-db-3.sql`, run in order):
 
 ### `digital-me-db-1.sql` (initial schema)
 ```sql
@@ -243,9 +259,28 @@ INSERT INTO APPLICATION_METADATA (KEY, VALUE) VALUES ('database.version', '2')
 ON CONFLICT (KEY) DO UPDATE SET VALUE = '2';
 ```
 
+### `digital-me-db-3.sql` (schema v3: bge-m3 migration)
+```sql
+ALTER TABLE MCP_EMBEDDING ADD COLUMN MIGRATED_AT TEXT;
+CREATE INDEX mcp_embedding_unmigrated_idx ON MCP_EMBEDDING (FILE_PATH) WHERE MIGRATED_AT IS NULL;
+
+CREATE TABLE MCP_EMBEDDING_V2 (
+    FILE_PATH TEXT NOT NULL, CHUNK_INDEX INTEGER NOT NULL DEFAULT 0,
+    SOURCE_URL TEXT NOT NULL, CHUNK_TEXT TEXT NOT NULL,
+    EMBEDDING extensions.VECTOR(1024) NOT NULL,
+    MODEL TEXT NOT NULL, INDEXED_AT TEXT NOT NULL,
+    PRIMARY KEY (FILE_PATH, CHUNK_INDEX)
+);
+CREATE INDEX mcp_embedding_v2_hnsw_idx ON MCP_EMBEDDING_V2 USING hnsw (EMBEDDING extensions.vector_cosine_ops);
+CREATE INDEX mcp_embedding_v2_source_idx ON MCP_EMBEDDING_V2 (SOURCE_URL);
+-- bumps database.version to 3
+```
+
+`MIGRATED_AT` is an ISO-8601 instant, `NULL` until the file's chunks have been copied into `MCP_EMBEDDING_V2`. `MCP_EMBEDDING_V2` holds bge-m3 vectors (1024 dimensions).
+
 `TIME` and `INDEXED_AT` are stored as ISO-8601 instant strings (e.g. `2024-01-15T10:30:00Z`).
 
-`VECTOR(768)` is fixed to `nomic-embed-text`'s output dimension — the only supported embedding model. Changing `ollama.embedding.model` to a different-dimension model requires a new migration (`ALTER TABLE MCP_EMBEDDING ALTER COLUMN EMBEDDING TYPE vector(N)`), the same way `deleteByModelNot()` already discards and re-embeds on any model change today. `EMBEDDING` is queried via pgvector's `<=>` cosine-distance operator, not loaded into application memory — but scored exactly and sequentially: `findSimilar()`'s `ORDER BY source_url, embedding OPERATOR(extensions.<=>) ?` sorts primarily by `source_url` (to support `DISTINCT ON (source_url)`) with no `LIMIT` on that subquery, so Postgres cannot use the `mcp_embedding_hnsw_idx` HNSW index for this query — it sequentially scans and cosine-scores every row instead. Results are exact (not approximate ANN), and the index exists on the column for a future differently-shaped query to use, but no current query is index-accelerated.
+`MCP_EMBEDDING`'s `VECTOR(768)` is fixed to `nomic-embed-text`'s output dimension, and `MCP_EMBEDDING_V2`'s `VECTOR(1024)` to `bge-m3`'s — the only supported model for each table. Changing `ollama.embedding.model` to a different-dimension model requires a new migration (`ALTER TABLE MCP_EMBEDDING ALTER COLUMN EMBEDDING TYPE vector(N)`), the same way `deleteByModelNot()` already discards and re-embeds on any model change today. `EMBEDDING` is queried via pgvector's `<=>` cosine-distance operator, not loaded into application memory — but scored exactly and sequentially: `findSimilar()`'s `ORDER BY source_url, embedding OPERATOR(extensions.<=>) ?` sorts primarily by `source_url` (to support `DISTINCT ON (source_url)`) with no `LIMIT` on that subquery, so Postgres cannot use the `mcp_embedding_hnsw_idx` HNSW index for this query — it sequentially scans and cosine-scores every row instead. Results are exact (not approximate ANN), and the index exists on the column for a future differently-shaped query to use, but no current query is index-accelerated.
 
 ---
 

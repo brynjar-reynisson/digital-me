@@ -18,7 +18,7 @@ Personal search engine that indexes local `.txt` files and web pages visited via
 | MCP server | MCP SDK 1.0.0 (`io.modelcontextprotocol.sdk:mcp`) |
 | Web server | Undertow (Tomcat explicitly excluded in pom.xml) |
 | Full-text search | Apache Lucene (via camel-lucene-starter) |
-| Semantic search | Ollama local AI (`nomic-embed-text` model, 2048-token context) |
+| Semantic search | Ollama local AI (`nomic-embed-text` model, 2048-token context; gradually migrating to `bge-m3`, 1024-dim, behind `embedding.v2.enabled`) |
 | Database | PostgreSQL + `pgvector` (via `org.postgresql:postgresql`, pooled with HikariCP) |
 | HTML parsing | Jsoup |
 | Frontend | React 19, Vite 7, TypeScript 5 (strict) |
@@ -66,7 +66,9 @@ digital-me/
 │   │   ├── ResourceReceiver.java    Writes MCP client content to mcp-resources/
 │   │   ├── EmbeddingClient.java     Functional interface: float[] embed(String text)
 │   │   ├── OllamaEmbeddingClient.java  HTTP client for Ollama /api/embeddings
-│   │   ├── EmbeddingIndex.java      Postgres pgvector index; queries via McpEmbeddingDao
+│   │   ├── EmbeddingIndex.java      Postgres pgvector index; queries via McpEmbeddingDao; dual-writes + rank-fuses nomic/bge-m3 when v2 enabled
+│   │   ├── EmbeddingMigrator.java   Background backfill of MCP_EMBEDDING_V2 (bge-m3) from the legacy table
+│   │   ├── V2Settings.java          Record: bge-m3 client/model/prefixes/min-score (bean only when embedding.v2.enabled=true)
 │   │   ├── SummarizeClient.java     Functional interface: String summarize(String text)
 │   │   ├── GeminiSummarizeClient.java  HTTP client for Gemini's free-tier generateContent API (default fast summarizer)
 │   │   ├── FallbackSummarizeClient.java  Composes a primary + fallback SummarizeClient
@@ -89,6 +91,7 @@ digital-me/
 │   ├── application.properties
 │   ├── digital-me-db-1.sql          DB migration script (full Postgres schema: all tables + `vector` extension + HNSW index)
 │   ├── digital-me-db-2.sql          DB migration script (widens TEXT_ENTRY.TIME column)
+│   ├── digital-me-db-3.sql          DB migration script (MIGRATED_AT column + MCP_EMBEDDING_V2 vector(1024) table for bge-m3)
 │   └── static/                      Built frontend assets (committed to git)
 ├── checkstyle.xml                   Checkstyle rules (unused imports, equals-avoid-null, etc.)
 └── .claude/

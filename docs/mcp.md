@@ -32,6 +32,7 @@ Exposed at `POST /mcp` (Streamable HTTP transport, `HttpServletStreamableServerT
 - Ollama must be running locally (`http://localhost:11434`)
 - Required models:
   - `ollama pull nomic-embed-text` (274 MB) — for semantic search embeddings
+  - `ollama pull bge-m3` — only needed when `embedding.v2.enabled=true` (gradual migration of semantic search to bge-m3; see `docs/architecture.md`, `EmbeddingMigrator`). On Windows with an Intel iGPU, set the user environment variable `OLLAMA_IGPU_ENABLE=1` and restart Ollama for ~3.6x faster bge-m3 embedding
   - `ollama pull llama3.2` — needed only when `summarize.provider=ollama` is explicitly set; not required for the default Gemini/DeepSeek summarization path (configurable via `ollama.summarize.model`)
 - If Ollama is unavailable the app still starts; semantic search falls back to keyword scan (embeddings need Ollama), while summarization is unaffected — it defaults to Gemini/DeepSeek, neither of which depends on Ollama
 
