@@ -20,4 +20,6 @@
 - `OllamaEmbeddingClientTest` uses JDK built-in `com.sun.net.httpserver.HttpServer` to mock Ollama HTTP responses without extra test dependencies; starts on port 0 (OS-assigned) in `@BeforeEach` and stops in `@AfterEach`
 - `EmbeddingIndexTest` uses `PostgresTestSupport.createIsolatedSchema()` in `@BeforeAll` and `PostgresTestSupport.dropSchema()` in `@AfterAll`, plus a separate instance `@TempDir` for file content
 - `McpEmbeddingDaoTest` uses the same `PostgresTestSupport` lifecycle for Postgres schema isolation
+- bge-m3 (V2) tests: `MCP_EMBEDDING_V2.EMBEDDING` is `VECTOR(1024)` (legacy table is 768), and pgvector enforces the exact dimension, so test vectors for V2 are zero-padded to 1024 dims (padding both sides leaves cosine scores unchanged)
+- `EmbeddingMigratorTest` constructs the migrator with an injectable `java.time.Clock` (`EmbeddingMigrator(V2Settings, Clock)`) and calls `migrateBatch()` directly, so the penalty-box window is tested by advancing a fake clock rather than sleeping; the background thread is never started
 - `DeepseekSummarizeClientTest` only unit-tests the pure static helpers (`extractSummary()`, `sanitizeArgument()`) — no test spawns a real `opencode` process, so subprocess-handling correctness (PATHEXT resolution, stdin blocking, cmd.exe argument quoting) is verified manually against a live `opencode` install, not in CI

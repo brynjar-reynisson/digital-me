@@ -6,13 +6,16 @@ import com.breynisson.router.mcp.DeepseekSummarizeClient;
 import com.breynisson.router.mcp.EmbeddingIndex;
 import com.breynisson.router.mcp.FallbackSummarizeClient;
 import com.breynisson.router.mcp.GeminiSummarizeClient;
+import com.breynisson.router.mcp.OllamaEmbeddingClient;
 import com.breynisson.router.mcp.OllamaSummarizeClient;
 import com.breynisson.router.mcp.SummarizeClient;
+import com.breynisson.router.mcp.V2Settings;
 import com.breynisson.router.jdbc.DatabaseAdapter;
 import com.breynisson.router.lucene.LuceneIndex;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.camel.CamelContext;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -41,6 +44,24 @@ public class AppConfig {
     public DigitalMeStorage digitalMeStorage(EmbeddingIndex embeddingIndex,
             @Value("${embedding.executor.pool-size:1}") int embeddingPoolSize) {
         return new DefaultDigitalMeStorage(dataDir, embeddingIndex, embeddingPoolSize);
+    }
+
+    /**
+     * Second-generation embedding model for the gradual nomic-embed-text to bge-m3 migration.
+     * Its client is built here rather than registered as a bean so the single EmbeddingClient
+     * bean (OllamaEmbeddingClient) stays unambiguous for injection.
+     */
+    @Bean
+    @ConditionalOnProperty(name = "embedding.v2.enabled", havingValue = "true")
+    public V2Settings v2Settings(
+            ObjectMapper objectMapper,
+            @Value("${ollama.url:http://localhost:11434}") String ollamaUrl,
+            @Value("${embedding.v2.model:bge-m3}") String model,
+            @Value("${embedding.v2.document-prefix:}") String documentPrefix,
+            @Value("${embedding.v2.query-prefix:}") String queryPrefix,
+            @Value("${embedding.v2.min-score:0.35}") float minScore) {
+        return new V2Settings(new OllamaEmbeddingClient(ollamaUrl, model, objectMapper),
+                model, documentPrefix, queryPrefix, minScore);
     }
 
     @Bean

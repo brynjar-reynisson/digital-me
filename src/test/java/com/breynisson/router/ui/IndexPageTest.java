@@ -6,12 +6,14 @@ import com.breynisson.router.digitalme.AddContentResponse;
 import com.breynisson.router.digitalme.SearchResponse;
 import com.breynisson.router.digitalme.TestDigitalMeStorage;
 import com.breynisson.router.jdbc.AddContentQueueDao;
+import com.breynisson.router.jdbc.DatabaseAdapter;
 import com.breynisson.router.jdbc.McpEmbeddingDao;
 import com.breynisson.router.jdbc.PostgresTestSupport;
 import com.breynisson.router.jdbc.TextEntryDao;
 import com.breynisson.router.jdbc.model.AddContentQueueEntry;
 import com.breynisson.router.jdbc.model.McpEmbedding;
 import com.breynisson.router.mcp.EmbeddingIndex;
+import com.breynisson.router.mcp.V2Settings;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -115,6 +118,80 @@ class IndexPageTest {
 
         assertEquals(0, health.get("totalFilesOnDisk"));
         assertEquals(100.0, health.get("coveragePercent"));
+    }
+
+    @Test
+    void healthIndexOmitsMigrationWhenV2Disabled() {
+        Map<String, Object> health = indexPage.indexHealth();
+
+        assertEquals(Set.of("indexedFiles", "totalChunks", "totalFilesOnDisk", "coveragePercent"),
+                health.keySet());
+    }
+
+    @Test
+    void healthIndexReportsMigrationProgressWhenV2Enabled() {
+        clearEmbeddingTables();
+        IndexPage page = indexPageWithV2();
+        String migratedA = tempDir.resolve("migrated-a.txt").toAbsolutePath().toString();
+        String migratedB = tempDir.resolve("migrated-b.txt").toAbsolutePath().toString();
+        String unmigratedA = tempDir.resolve("unmigrated-a.txt").toAbsolutePath().toString();
+        String unmigratedB = tempDir.resolve("unmigrated-b.txt").toAbsolutePath().toString();
+        try {
+            McpEmbeddingDao.upsertDual(
+                    List.of(legacyRow(migratedA, "source-migrated-a"), legacyRow(migratedB, "source-migrated-b")),
+                    List.of(v2Row(migratedA, "source-migrated-a"), v2Row(migratedB, "source-migrated-b")),
+                    "2026-01-02T00:00:00Z");
+            McpEmbeddingDao.upsert(legacyRow(unmigratedA, "source-unmigrated-a"));
+            McpEmbeddingDao.upsert(legacyRow(unmigratedB, "source-unmigrated-b"));
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> migration = (Map<String, Object>) page.indexHealth().get("migration");
+
+            assertEquals(2, migration.get("migratedFiles"));
+            assertEquals(2, migration.get("remainingFiles"));
+            assertEquals(2, migration.get("migratedChunks"));
+            assertEquals(2, migration.get("remainingChunks"));
+            assertEquals(50.0, migration.get("percentMigrated"));
+        } finally {
+            clearEmbeddingTables();
+        }
+    }
+
+    @Test
+    void percentMigratedIs100WhenNoChunks() {
+        clearEmbeddingTables();
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> migration = (Map<String, Object>) indexPageWithV2().indexHealth().get("migration");
+
+            assertEquals(0, migration.get("migratedChunks"));
+            assertEquals(0, migration.get("remainingChunks"));
+            assertEquals(100.0, migration.get("percentMigrated"));
+        } finally {
+            clearEmbeddingTables();
+        }
+    }
+
+    private IndexPage indexPageWithV2() {
+        V2Settings v2 = new V2Settings(text -> null, "bge-m3", "", "", 0f);
+        return new IndexPage(storage, null, text -> null, text -> null,
+                new EmbeddingIndex(text -> null, tempDir.toString(), v2));
+    }
+
+    private static void clearEmbeddingTables() {
+        DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING");
+        DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING_V2");
+    }
+
+    private static McpEmbedding legacyRow(String filePath, String sourceUrl) {
+        return new McpEmbedding(filePath, 0, sourceUrl, "text for " + sourceUrl,
+                embeddingBytes(), "nomic-embed-text", "2026-01-01T00:00:00Z");
+    }
+
+    /** MCP_EMBEDDING_V2 is declared vector(1024) for bge-m3 (digital-me-db-3.sql). */
+    private static McpEmbedding v2Row(String filePath, String sourceUrl) {
+        return new McpEmbedding(filePath, 0, sourceUrl, "text for " + sourceUrl,
+                new float[1024], "bge-m3", "2026-01-01T00:00:00Z");
     }
 
     @Test
