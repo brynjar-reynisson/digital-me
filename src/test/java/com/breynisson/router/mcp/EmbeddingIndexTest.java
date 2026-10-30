@@ -11,6 +11,9 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -51,6 +54,201 @@ class EmbeddingIndexTest {
     private static void cleanup(Path... files) {
         for (Path f : files)
             DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING WHERE FILE_PATH='" + f.toAbsolutePath() + "'");
+        for (Path f : files)
+            DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING_V2 WHERE FILE_PATH='" + f.toAbsolutePath() + "'");
+    }
+
+    private static final int V2_DIMENSIONS = 1024;
+
+    private static float[] v2(float... values) {
+        float[] padded = new float[V2_DIMENSIONS];
+        System.arraycopy(values, 0, padded, 0, values.length);
+        return padded;
+    }
+
+    private static V2Settings v2Settings(EmbeddingClient client, float minScore) {
+        return new V2Settings(client, "bge-m3", "", "", minScore);
+    }
+
+    private static int count(String table, String extraWhere, Path file) {
+        Integer n = DatabaseAdapter.selectOne(
+                "SELECT COUNT(*) FROM " + table + " WHERE FILE_PATH = ?" + extraWhere,
+                rset -> {
+                    rset.next();
+                    return List.of(rset.getInt(1));
+                }, file.toAbsolutePath().toString());
+        return n;
+    }
+
+    private static int v2Count(Path file) {
+        return count("MCP_EMBEDDING_V2", "", file);
+    }
+
+    private static int unmarkedOldCount(Path file) {
+        return count("MCP_EMBEDDING", " AND MIGRATED_AT IS NULL", file);
+    }
+
+    private static int oldCount(Path file) {
+        return count("MCP_EMBEDDING", "", file);
+    }
+
+    private Path write(String name, String url, String body) throws Exception {
+        Path dir = Files.createDirectories(dataDir.resolve("mcp-resources").resolve("2026-03"));
+        Path f = dir.resolve(name);
+        Files.writeString(f, url + "\n" + body);
+        return f;
+    }
+
+    @Test
+    void indexFileWithV2WritesBothTablesAndMarksMigrated() throws Exception {
+        Path f = write("dual.txt", "http://dual.com", "hello dual");
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
+                v2Settings(text -> v2(1.0f), 0f));
+        index.indexFile(f);
+
+        assertEquals(1, oldCount(f));
+        assertEquals(0, unmarkedOldCount(f));
+        assertEquals(1, v2Count(f));
+        cleanup(f);
+    }
+
+    @Test
+    void indexFileWhenV2EmbedFailsWritesOldRowOnlyUnmarked() throws Exception {
+        Path f = write("v2fail.txt", "http://v2fail.com", "hello");
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
+                v2Settings(text -> null, 0f));
+        index.indexFile(f);
+
+        assertEquals(1, unmarkedOldCount(f));
+        assertEquals(0, v2Count(f));
+        cleanup(f);
+    }
+
+    @Test
+    void indexFileWhenLegacyEmbedFailsWritesNothing() throws Exception {
+        Path f = write("legacyfail.txt", "http://legacyfail.com", "hello");
+        EmbeddingIndex index = new EmbeddingIndex(text -> null, dataDir.toString(),
+                v2Settings(text -> v2(1.0f), 0f));
+        index.indexFile(f);
+
+        assertEquals(0, oldCount(f));
+        assertEquals(0, v2Count(f));
+    }
+
+    @Test
+    void findSimilarWithoutV2IgnoresMigratedMarker() throws Exception {
+        Path f = write("marked.txt", "http://marked.com", "hello marked");
+        new EmbeddingIndex(text -> v(1.0f), dataDir.toString(), v2Settings(text -> v2(1.0f), 0f)).indexFile(f);
+        assertEquals(0, unmarkedOldCount(f));
+
+        EmbeddingIndex noV2 = new EmbeddingIndex(text -> v(1.0f), dataDir.toString());
+        List<EmbeddingIndex.ScoredResult> results = noV2.findSimilar("q", 5);
+
+        assertEquals(1, results.size());
+        assertEquals("http://marked.com", results.get(0).sourceUrl());
+        cleanup(f);
+    }
+
+    @Test
+    void findSimilarFusesDisjointSetsByRank() throws Exception {
+        Path a1 = write("a1.txt", "http://a1.com", "doc a1");
+        Path a2 = write("a2.txt", "http://a2.com", "doc a2");
+        Path b1 = write("b1.txt", "http://b1.com", "doc b1");
+        Path b2 = write("b2.txt", "http://b2.com", "doc b2");
+        AtomicBoolean v2Up = new AtomicBoolean(false);
+        EmbeddingClient old = text -> {
+            if (text.contains("doc a1") || text.contains("doc b1")) return v(1.0f, 0.0f);
+            if (text.contains("doc a2") || text.contains("doc b2")) return v(1.0f, 1.0f);
+            return v(1.0f, 0.0f);
+        };
+        EmbeddingClient second = text -> {
+            if (text.contains("doc")) {
+                if (!v2Up.get()) return null;
+                return text.contains("b1") ? v2(1.0f, 0.0f) : v2(1.0f, 1.0f);
+            }
+            return v2(1.0f, 0.0f);
+        };
+        EmbeddingIndex index = new EmbeddingIndex(old, dataDir.toString(), v2Settings(second, 0f));
+        index.indexFile(a1);
+        index.indexFile(a2);
+        v2Up.set(true);
+        index.indexFile(b1);
+        index.indexFile(b2);
+
+        List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
+
+        assertEquals(4, results.size());
+        assertEquals(Set.of("http://a1.com", "http://b1.com"),
+                Set.of(results.get(0).sourceUrl(), results.get(1).sourceUrl()));
+        assertEquals(Set.of("http://a2.com", "http://b2.com"),
+                Set.of(results.get(2).sourceUrl(), results.get(3).sourceUrl()));
+        cleanup(a1, a2, b1, b2);
+    }
+
+    @Test
+    void findSimilarWithOneModelUnavailableStillServesTheOtherSide() throws Exception {
+        Path f = write("one.txt", "http://one.com", "doc one");
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
+                v2Settings(text -> v2(1.0f), 0f));
+        index.indexFile(f);
+
+        // legacy down, v2 up: the v2 side serves
+        EmbeddingIndex legacyDown = new EmbeddingIndex(text -> null, dataDir.toString(),
+                v2Settings(text -> v2(1.0f), 0f));
+        List<EmbeddingIndex.ScoredResult> results = legacyDown.findSimilar("query", 5);
+        assertEquals(1, results.size());
+        assertEquals("http://one.com", results.get(0).sourceUrl());
+
+        // v2 down, legacy up: the file is migrated so the legacy side skips it, nothing else to serve
+        EmbeddingIndex v2Down = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
+                v2Settings(text -> null, 0f));
+        assertTrue(v2Down.findSimilar("query", 5).isEmpty());
+        cleanup(f);
+    }
+
+    @Test
+    void findSimilarDeduplicatesSameSourceInBothTables() throws Exception {
+        Path f = write("both.txt", "http://both.com", "doc both");
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
+                v2Settings(text -> v2(1.0f), 0f));
+        index.indexFile(f);
+        // simulate a legacy row for the same source that is still unmigrated
+        DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = NULL WHERE FILE_PATH='"
+                + f.toAbsolutePath() + "'");
+
+        List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
+
+        assertEquals(1, results.size());
+        assertEquals("http://both.com", results.get(0).sourceUrl());
+        cleanup(f);
+    }
+
+    @Test
+    void findSimilarAppliesV2MinScoreToV2SideOnly() throws Exception {
+        Path oldFile = write("oldside.txt", "http://oldside.com", "doc old");
+        Path v2File = write("v2side.txt", "http://v2side.com", "doc v2");
+        AtomicBoolean v2Up = new AtomicBoolean(false);
+        // old side: docs score 1.0 vs query; v2 side: doc v2 is orthogonal to the query
+        EmbeddingClient second = text -> {
+            if (text.contains("doc")) return v2Up.get() ? v2(0.0f, 1.0f) : null;
+            return v2(1.0f, 0.0f);
+        };
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f, 0.0f), dataDir.toString(),
+                "nomic-embed-text", "", "", 0.5f, "", Optional.of(v2Settings(second, 0.5f)));
+        index.indexFile(oldFile);
+        v2Up.set(true);
+        index.indexFile(v2File);
+
+        List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
+
+        assertEquals(1, results.size());
+        assertEquals("http://oldside.com", results.get(0).sourceUrl());
+        cleanup(oldFile, v2File);
+    }
+
+    @Test
+    void migrationStatusEmptyWithoutV2() {
+        assertTrue(new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).migrationStatus().isEmpty());
     }
 
     @Test
