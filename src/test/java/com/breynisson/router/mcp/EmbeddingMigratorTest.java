@@ -219,4 +219,53 @@ class EmbeddingMigratorTest {
         working[0] = true;
         assertEquals(1, m.migrateBatch(5));
     }
+
+    @Test
+    void pausesChunkEmbeddingWhileInteractiveSearchActive() {
+        addOld("/a", "http://x.com/a", "a0", "a1");
+        List<String> events = new CopyOnWriteArrayList<>();
+        int[] polls = {0};
+        EmbeddingMigrator m = new EmbeddingMigrator(settings(t -> {
+            events.add("embed");
+            return vec(1024);
+        }), java.time.Clock.systemUTC(), () -> {
+            events.add("poll");
+            return ++polls[0] <= 3;
+        }, 1);
+        assertEquals(1, m.migrateBatch(10));
+        assertEquals(List.of("poll", "poll", "poll", "poll", "embed", "poll", "embed"), events);
+        assertEquals(0, McpEmbeddingDao.migrationStatus().remainingFiles());
+    }
+
+    @Test
+    void pausingDoesNotPenaliseFile() {
+        addOld("/a", "http://x.com/a", "a0");
+        int[] polls = {0};
+        EmbeddingMigrator m = new EmbeddingMigrator(settings(t -> vec(1024)),
+                java.time.Clock.systemUTC(), () -> ++polls[0] <= 50, 1);
+        for (int i = 0; i < EmbeddingMigrator.PENALTY_THRESHOLD + 1; i++) {
+            addOld("/a", "http://x.com/a", "a0");
+            assertEquals(1, m.migrateBatch(10));
+            polls[0] = 0;
+        }
+    }
+
+    @Test
+    void interruptDuringPauseAbortsFileWithoutCommit() {
+        addOld("/a", "http://x.com/a", "a0");
+        int[] embeds = {0};
+        EmbeddingMigrator m = new EmbeddingMigrator(settings(t -> {
+            embeds[0]++;
+            return vec(1024);
+        }), java.time.Clock.systemUTC(), () -> true, 1);
+        Thread.currentThread().interrupt();
+        try {
+            assertEquals(0, m.migrateBatch(10));
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
+        assertEquals(0, embeds[0]);
+        assertEquals(1, McpEmbeddingDao.migrationStatus().remainingFiles());
+    }
 }

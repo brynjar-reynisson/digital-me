@@ -33,6 +33,10 @@ import java.util.stream.Stream;
 @Component
 public class EmbeddingIndex {
 
+    /** Epoch millis of the last interactive search; 0 = never. */
+    private volatile long lastSearchMillis;
+
+
     private static final Logger log = LoggerFactory.getLogger(EmbeddingIndex.class);
     private static final String DEFAULT_MODEL = "nomic-embed-text";
     private static final int RRF_K = 60;
@@ -190,12 +194,19 @@ public class EmbeddingIndex {
         }
     }
 
+    /** True if an interactive semantic search started less than {@code window} ago (false if none ever). */
+    public boolean searchedWithin(java.time.Duration window) {
+        long last = lastSearchMillis;
+        return last != 0 && System.currentTimeMillis() - last < window.toMillis();
+    }
+
     /**
      * Embeds the query and returns the top-K most similar files by cosine similarity,
      * deduplicated to each source URL's single best-scoring chunk. Returns an empty list if
      * Ollama is unavailable or no embeddings are stored.
      */
     public List<ScoredResult> findSimilar(String query, int topK) {
+        lastSearchMillis = System.currentTimeMillis();
         String prefixedQuery = queryPrefix.isEmpty() ? query : queryPrefix + " " + query;
         float[] rawQueryEmbedding = embeddingClient.embed(prefixedQuery);
         float[] queryVector = rawQueryEmbedding == null ? null : normalize(rawQueryEmbedding);

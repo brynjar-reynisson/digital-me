@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 
 /**
  * Background backfill that re-embeds the stored chunk text of legacy (nomic) rows with the
@@ -30,6 +31,7 @@ public class EmbeddingMigrator {
     private static final Logger log = LoggerFactory.getLogger(EmbeddingMigrator.class);
     private static final int BATCH_SIZE = 25;
     private static final long BACKOFF_MILLIS = 30_000L;
+    private static final long DEFAULT_POLL_MILLIS = 1000L;
 
     static final int PENALTY_THRESHOLD = 3;
     static final Duration PENALTY = Duration.ofMinutes(10);
@@ -40,23 +42,39 @@ public class EmbeddingMigrator {
     // Only touched by the single migrator thread (or a test thread)
     private final Map<String, Integer> failures = new HashMap<>();
     private final Map<String, Instant> penalisedUntil = new HashMap<>();
+    private final BooleanSupplier interactiveActive;
+    private final long pollMillis;
     private boolean failing = false;
 
     @Autowired
-    public EmbeddingMigrator(V2Settings v2, @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath) {
-        this.v2 = v2;
-        this.skip = !migrateSqlitePath.isBlank();
-        this.clock = Clock.systemUTC();
+    public EmbeddingMigrator(V2Settings v2, @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath,
+                             EmbeddingIndex embeddingIndex,
+                             @Value("${embedding.v2.migrator-idle-seconds:120}") int idleSeconds) {
+        this(v2, !migrateSqlitePath.isBlank(), Clock.systemUTC(),
+                idleSeconds <= 0 ? () -> false
+                        : () -> embeddingIndex.searchedWithin(Duration.ofSeconds(idleSeconds)),
+                DEFAULT_POLL_MILLIS);
     }
 
     public EmbeddingMigrator(V2Settings v2) {
-        this(v2, "");
+        this(v2, Clock.systemUTC());
     }
 
     EmbeddingMigrator(V2Settings v2, Clock clock) {
+        this(v2, false, clock, () -> false, DEFAULT_POLL_MILLIS);
+    }
+
+    EmbeddingMigrator(V2Settings v2, Clock clock, BooleanSupplier interactiveActive, long pollMillis) {
+        this(v2, false, clock, interactiveActive, pollMillis);
+    }
+
+    private EmbeddingMigrator(V2Settings v2, boolean skip, Clock clock, BooleanSupplier interactiveActive,
+                              long pollMillis) {
         this.v2 = v2;
-        this.skip = false;
+        this.skip = skip;
         this.clock = clock;
+        this.interactiveActive = interactiveActive;
+        this.pollMillis = pollMillis;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -134,6 +152,7 @@ public class EmbeddingMigrator {
         String indexedAt = Instant.now().toString();
         List<McpEmbedding> rows = new ArrayList<>();
         for (McpEmbeddingDao.ChunkToMigrate chunk : chunks) {
+            if (!yieldToInteractiveSearch()) return false;
             String text = v2.documentPrefix().isEmpty() ? chunk.chunkText() : v2.documentPrefix() + " " + chunk.chunkText();
             float[] embedding = v2.client().embed(text);
             if (embedding == null) return false;
@@ -141,5 +160,21 @@ public class EmbeddingMigrator {
                     EmbeddingIndex.normalize(embedding), v2.model(), indexedAt));
         }
         return McpEmbeddingDao.commitMigration(filePath, rows, indexedAt);
+    }
+
+    /** Blocks while an interactive search is active; returns false (interrupt flag restored) if interrupted. */
+    private boolean yieldToInteractiveSearch() {
+        if (!interactiveActive.getAsBoolean()) return true;
+        log.info("Embedding migration pausing for interactive search");
+        try {
+            do {
+                Thread.sleep(pollMillis);
+            } while (interactiveActive.getAsBoolean());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        log.info("Embedding migration resuming after interactive search");
+        return true;
     }
 }

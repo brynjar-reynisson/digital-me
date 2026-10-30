@@ -496,4 +496,15 @@ class EmbeddingIndexTest {
 
         assertEquals("search_query: hello", captured[0]);
     }
+
+    @Test
+    void searchedWithinTracksLastSearch() throws Exception {
+        EmbeddingIndex index = new EmbeddingIndex(text -> null, dataDir.toString());
+        assertFalse(index.searchedWithin(java.time.Duration.ofHours(1)));
+        index.findSimilar("query", 5);
+        assertTrue(index.searchedWithin(java.time.Duration.ofHours(1)));
+        Thread.sleep(30);
+        assertFalse(index.searchedWithin(java.time.Duration.ofMillis(5)));
+        assertFalse(index.searchedWithin(java.time.Duration.ZERO));
+    }
 }
