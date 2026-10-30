@@ -140,4 +140,83 @@ class EmbeddingMigratorTest {
         })).migrateBatch(10);
         assertEquals(List.of("doc: local", "doc: web"), order);
     }
+
+    private static class MutableClock extends java.time.Clock {
+        java.time.Instant now = java.time.Instant.parse("2026-01-01T00:00:00Z");
+
+        @Override
+        public java.time.ZoneId getZone() {
+            return java.time.ZoneOffset.UTC;
+        }
+
+        @Override
+        public java.time.Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public java.time.Instant instant() {
+            return now;
+        }
+    }
+
+    @Test
+    void poisonHeadFilesDoNotStarveLaterFiles() {
+        addOld("/p1", "C:/p1.txt", "poison1");
+        addOld("/p2", "C:/p2.txt", "poison2");
+        addOld("/h1", "http://x.com/h1", "healthy1");
+        addOld("/h2", "http://x.com/h2", "healthy2");
+        java.util.concurrent.atomic.AtomicInteger poisonCalls = new java.util.concurrent.atomic.AtomicInteger();
+        EmbeddingMigrator m = new EmbeddingMigrator(settings(t -> {
+            if (t.contains("poison")) {
+                poisonCalls.incrementAndGet();
+                return null;
+            }
+            return vec(1024);
+        }), new MutableClock());
+        assertEquals(0, m.migrateBatch(2));
+        assertEquals(0, m.migrateBatch(2));
+        assertEquals(0, m.migrateBatch(2));
+        assertEquals(6, poisonCalls.get());
+        assertEquals(2, m.migrateBatch(2));
+        assertEquals(6, poisonCalls.get());
+        assertEquals(2, count("MCP_EMBEDDING_V2", "FILE_PATH IN ('/h1','/h2')"));
+    }
+
+    @Test
+    void penalisedFileIsRetriedAfterPenaltyExpires() {
+        addOld("/p", "C:/p.txt", "poison");
+        MutableClock clock = new MutableClock();
+        boolean[] working = {false};
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        EmbeddingMigrator m = new EmbeddingMigrator(settings(t -> {
+            calls.incrementAndGet();
+            return working[0] ? vec(1024) : null;
+        }), clock);
+        for (int i = 0; i < 3; i++) m.migrateBatch(5);
+        assertEquals(3, calls.get());
+        assertEquals(0, m.migrateBatch(5));
+        assertEquals(3, calls.get());
+        working[0] = true;
+        clock.now = clock.now.plus(java.time.Duration.ofMinutes(11));
+        assertEquals(1, m.migrateBatch(5));
+        assertEquals(4, calls.get());
+    }
+
+    @Test
+    void successResetsFailureCount() {
+        addOld("/p", "C:/p.txt", "x");
+        boolean[] working = {false};
+        EmbeddingMigrator m = new EmbeddingMigrator(settings(t -> working[0] ? vec(1024) : null), new MutableClock());
+        m.migrateBatch(5);
+        m.migrateBatch(5);
+        working[0] = true;
+        assertEquals(1, m.migrateBatch(5));
+        addOld("/p", "C:/p.txt", "x");
+        working[0] = false;
+        m.migrateBatch(5);
+        m.migrateBatch(5);
+        working[0] = true;
+        assertEquals(1, m.migrateBatch(5));
+    }
 }

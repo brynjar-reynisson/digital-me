@@ -11,9 +11,13 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Background backfill that re-embeds the stored chunk text of legacy (nomic) rows with the
@@ -27,17 +31,31 @@ public class EmbeddingMigrator {
     private static final int BATCH_SIZE = 25;
     private static final long BACKOFF_MILLIS = 30_000L;
 
+    static final int PENALTY_THRESHOLD = 3;
+    static final Duration PENALTY = Duration.ofMinutes(10);
+
     private final V2Settings v2;
     private final boolean skip;
+    private final Clock clock;
+    // Only touched by the single migrator thread (or a test thread)
+    private final Map<String, Integer> failures = new HashMap<>();
+    private final Map<String, Instant> penalisedUntil = new HashMap<>();
 
     @Autowired
     public EmbeddingMigrator(V2Settings v2, @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath) {
         this.v2 = v2;
         this.skip = !migrateSqlitePath.isBlank();
+        this.clock = Clock.systemUTC();
     }
 
     public EmbeddingMigrator(V2Settings v2) {
         this(v2, "");
+    }
+
+    EmbeddingMigrator(V2Settings v2, Clock clock) {
+        this.v2 = v2;
+        this.skip = false;
+        this.clock = clock;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -69,18 +87,31 @@ public class EmbeddingMigrator {
 
     /** Migrates up to {@code limit} files; returns how many were committed. */
     int migrateBatch(int limit) {
+        Instant now = clock.instant();
+        penalisedUntil.values().removeIf(until -> !until.isAfter(now));
         int committed = 0;
         int failed = 0;
-        for (String filePath : McpEmbeddingDao.findNextUnmigratedFilePaths(limit)) {
+        List<String> candidates = McpEmbeddingDao.findNextUnmigratedFilePaths(limit + penalisedUntil.size());
+        int processed = 0;
+        for (String filePath : candidates) {
+            if (processed >= limit) break;
+            if (penalisedUntil.containsKey(filePath)) continue;
+            processed++;
+            boolean ok = false;
             try {
-                if (migrateFile(filePath)) {
-                    committed++;
-                } else {
-                    failed++;
-                }
+                ok = migrateFile(filePath);
             } catch (Exception e) {
+                log.warn("Migration of {} failed", filePath, e);
+            }
+            if (ok) {
+                committed++;
+                failures.remove(filePath);
+            } else {
                 failed++;
-                log.debug("Migration of {} failed", filePath, e);
+                int count = failures.merge(filePath, 1, Integer::sum);
+                if (count >= PENALTY_THRESHOLD) {
+                    penalisedUntil.put(filePath, now.plus(PENALTY));
+                }
             }
         }
         if (failed > 0) {
