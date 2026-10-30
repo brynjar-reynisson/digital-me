@@ -199,10 +199,12 @@ class EmbeddingIndexTest {
         assertEquals(1, results.size());
         assertEquals("http://one.com", results.get(0).sourceUrl());
 
-        // v2 down, legacy up: the file is migrated so the legacy side skips it, nothing else to serve
+        // v2 down, legacy up: the migrated file is still served from the legacy (nomic) side
         EmbeddingIndex v2Down = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
                 v2Settings(text -> null, 0f));
-        assertTrue(v2Down.findSimilar("query", 5).isEmpty());
+        List<EmbeddingIndex.ScoredResult> fallback = v2Down.findSimilar("query", 5);
+        assertEquals(1, fallback.size());
+        assertEquals("http://one.com", fallback.get(0).sourceUrl());
         cleanup(f);
     }
 

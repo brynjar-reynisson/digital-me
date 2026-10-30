@@ -40,6 +40,7 @@ public class EmbeddingMigrator {
     // Only touched by the single migrator thread (or a test thread)
     private final Map<String, Integer> failures = new HashMap<>();
     private final Map<String, Instant> penalisedUntil = new HashMap<>();
+    private boolean failing = false;
 
     @Autowired
     public EmbeddingMigrator(V2Settings v2, @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath) {
@@ -101,7 +102,8 @@ public class EmbeddingMigrator {
             try {
                 ok = migrateFile(filePath);
             } catch (Exception e) {
-                log.warn("Migration of {} failed", filePath, e);
+                if (failing) log.debug("Migration of {} failed", filePath, e);
+                else log.warn("Migration of {} failed", filePath, e);
             }
             if (ok) {
                 committed++;
@@ -115,7 +117,13 @@ public class EmbeddingMigrator {
             }
         }
         if (failed > 0) {
-            log.warn("Embedding migration: {} file(s) skipped this batch (embedding unavailable or file changed)", failed);
+            String msg = "Embedding migration: {} file(s) skipped this batch (embedding unavailable or file changed)";
+            if (failing) log.debug(msg, failed);
+            else log.warn(msg, failed);
+            failing = true;
+        } else if (failing && committed > 0) {
+            log.info("Embedding migration recovered, {} file(s) committed", committed);
+            failing = false;
         }
         return committed;
     }

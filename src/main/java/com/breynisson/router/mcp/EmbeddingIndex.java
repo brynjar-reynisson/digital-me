@@ -211,7 +211,9 @@ public class EmbeddingIndex {
         List<McpEmbeddingDao.ScoredMatch> v2Side = List.of();
         try {
             if (queryVector != null) {
-                oldSide = McpEmbeddingDao.findSimilar(McpEmbeddingDao.TABLE, queryVector, minScore, topK, v2 != null);
+                // Hide migrated rows only when the v2 side can actually serve them
+                oldSide = McpEmbeddingDao.findSimilar(McpEmbeddingDao.TABLE, queryVector, minScore, topK,
+                        v2 != null && v2QueryVector != null);
             }
         } catch (Exception e) {
             log.warn("Embedding search failed", e);

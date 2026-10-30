@@ -90,7 +90,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - `indexFile(path)`: reads the file, splits the body into ~2000-char sentence-boundary-aware chunks via `Chunker`, embeds each chunk (prefixed with `ollama.embedding.document-prefix`), normalizes to unit length, and stores one row per chunk in `MCP_EMBEDDING` via `McpEmbeddingDao.upsert()`
 - `findSimilar(query, topK)`: embeds the (prefixed) query, normalizes to unit length, delegates directly to `McpEmbeddingDao.findSimilar(queryVector, minScore, topK)` for SQL-side scoring via pgvector's `<=>` operator. Deduplication to each **source URL's** best-scoring chunk happens in the SQL `DISTINCT ON (source_url)` clause — a source resubmitted under a different physical file path still collapses to one result
 - `indexAll()` additionally reconciles the table on each run: deletes rows for files no longer on disk, and deletes rows whose `MODEL` doesn't match the currently configured `ollama.embedding.model` (both get re-embedded on the same pass)
-- **bge-m3 migration (only when `embedding.v2.enabled=true`, i.e. a `V2Settings` bean exists):** `indexFile()` dual-writes — each chunk is embedded with both nomic-embed-text and bge-m3 (using `embedding.v2.document-prefix`), then stored via `McpEmbeddingDao.upsertDual()` in one transaction into `MCP_EMBEDDING` (rows already marked `MIGRATED_AT`) and `MCP_EMBEDDING_V2`. If the bge-m3 embed returns `null` the file is written to the legacy table only, unmarked, and `EmbeddingMigrator` catches it up later. `findSimilar()` queries both tables (the legacy side with `unmigratedOnly=true`, so already-migrated rows aren't counted twice; the v2 side using `embedding.v2.min-score`) and combines the two ranked lists with reciprocal rank fusion (`RRF_K = 60`, keyed on source URL; each fused result keeps the chunk/score from the side where it ranked best). If either side's query fails or its embedding is unavailable, the other side's results are still used. `migrationStatus()` returns the migration counts (empty when v2 is disabled). With v2 disabled, behaviour is exactly the legacy single-table search
+- **bge-m3 migration (only when `embedding.v2.enabled=true`, i.e. a `V2Settings` bean exists):** `indexFile()` dual-writes — each chunk is embedded with both nomic-embed-text and bge-m3 (using `embedding.v2.document-prefix`), then stored via `McpEmbeddingDao.upsertDual()` in one transaction into `MCP_EMBEDDING` (rows already marked `MIGRATED_AT`) and `MCP_EMBEDDING_V2`. If the bge-m3 embed returns `null` the file is written to the legacy table only, unmarked, and `EmbeddingMigrator` catches it up later. `findSimilar()` queries both tables (the legacy side with `unmigratedOnly=true`, so already-migrated rows aren't counted twice, but only when the bge-m3 query embedding is available — otherwise the legacy side is queried without the `MIGRATED_AT` filter so migrated files stay searchable via their nomic vectors; the v2 side using `embedding.v2.min-score`) and combines the two ranked lists with reciprocal rank fusion (`RRF_K = 60`, keyed on source URL; each fused result keeps the chunk/score from the side where it ranked best). If either side's query fails or its embedding is unavailable, the other side's results are still used. `migrationStatus()` returns the migration counts (empty when v2 is disabled). With v2 disabled, behaviour is exactly the legacy single-table search
 - `countFilesOnDisk()` — recursive count of regular files under `mcp-resources/` (reuses the same walk as `listFilePaths()`, counting instead of collecting); returns `0` if the directory doesn't exist. Backs the `totalFilesOnDisk` figure in `/health/index`
 
 ### `McpEmbeddingDao`
@@ -101,7 +101,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - `deleteByModelNot(currentModel)` — deletes rows whose `MODEL` doesn't match the currently configured embedding model
 - `findFilePathsBySourceUrl(sourceUrl)` / `deleteBySourceUrl(sourceUrl)` — used by `ResourceReceiver.deleteExistingFor()` (see below) to find and remove all chunk rows for a given source in one indexed lookup, rather than walking `mcp-resources/` on every submission
 - **Table-parametrised operations (bge-m3 migration):** `upsert`, `findSimilar` and `deleteByModelNot` take a table name (`McpEmbeddingDao.TABLE` = `MCP_EMBEDDING`, `TABLE_V2` = `MCP_EMBEDDING_V2`); the legacy overloads delegate with `TABLE`. Upserting a legacy-table row resets its `MIGRATED_AT` to `NULL` (re-embedded content must be re-migrated). `findSimilar(table, vec, minScore, topK, unmigratedOnly)` can skip rows with `MIGRATED_AT` set. `deleteByFilePath`/`deleteBySourceUrl` now delete from both tables, so reindexing or removing a source leaves no stale v2 rows
-- `findNextUnmigratedFilePaths(limit)` / `findUnmigratedChunks(filePath)` — drive `EmbeddingMigrator` (backed by the partial index on `MIGRATED_AT IS NULL`)
+- `findNextUnmigratedFilePaths(limit)` / `findUnmigratedChunks(filePath)` — drive `EmbeddingMigrator` (the partial index on `MIGRATED_AT IS NULL` only makes this cheap once most files are migrated; it still scans the remaining unmigrated rows)
 - `commitMigration(filePath, rows, migratedAt)` — one transaction (`DatabaseAdapter.inTransaction`): upserts the v2 rows and marks the legacy rows migrated, but per-row only where the legacy row's `CHUNK_TEXT` still equals the migrated chunk's text; returns `false` (rolling back) if the file changed or vanished mid-migration, so stale embeddings are never marked as done
 - `upsertDual(oldRows, v2Rows, migratedAt)` — atomic dual-write used by `EmbeddingIndex.indexFile()`
 - `migrationStatus()` — `MigrationStatus(migratedFiles, remainingFiles, migratedChunks, remainingChunks)` from `MIGRATED_AT` counts; backs the `migration` block in `/health/index`
@@ -261,19 +261,19 @@ ON CONFLICT (KEY) DO UPDATE SET VALUE = '2';
 
 ### `digital-me-db-3.sql` (schema v3: bge-m3 migration)
 ```sql
-ALTER TABLE MCP_EMBEDDING ADD COLUMN MIGRATED_AT TEXT;
-CREATE INDEX mcp_embedding_unmigrated_idx ON MCP_EMBEDDING (FILE_PATH) WHERE MIGRATED_AT IS NULL;
+ALTER TABLE MCP_EMBEDDING ADD COLUMN IF NOT EXISTS MIGRATED_AT TEXT;
+CREATE INDEX IF NOT EXISTS mcp_embedding_unmigrated_idx ON MCP_EMBEDDING (FILE_PATH) WHERE MIGRATED_AT IS NULL;
 
-CREATE TABLE MCP_EMBEDDING_V2 (
+CREATE TABLE IF NOT EXISTS MCP_EMBEDDING_V2 (
     FILE_PATH TEXT NOT NULL, CHUNK_INDEX INTEGER NOT NULL DEFAULT 0,
     SOURCE_URL TEXT NOT NULL, CHUNK_TEXT TEXT NOT NULL,
     EMBEDDING extensions.VECTOR(1024) NOT NULL,
     MODEL TEXT NOT NULL, INDEXED_AT TEXT NOT NULL,
     PRIMARY KEY (FILE_PATH, CHUNK_INDEX)
 );
-CREATE INDEX mcp_embedding_v2_hnsw_idx ON MCP_EMBEDDING_V2 USING hnsw (EMBEDDING extensions.vector_cosine_ops);
-CREATE INDEX mcp_embedding_v2_source_idx ON MCP_EMBEDDING_V2 (SOURCE_URL);
--- bumps database.version to 3
+CREATE INDEX IF NOT EXISTS mcp_embedding_v2_hnsw_idx ON MCP_EMBEDDING_V2 USING hnsw (EMBEDDING extensions.vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS mcp_embedding_v2_source_idx ON MCP_EMBEDDING_V2 (SOURCE_URL);
+-- bumps database.version to 3 (every statement is idempotent so a re-run after a crash or redeploy is safe)
 ```
 
 `MIGRATED_AT` is an ISO-8601 instant, `NULL` until the file's chunks have been copied into `MCP_EMBEDDING_V2`. `MCP_EMBEDDING_V2` holds bge-m3 vectors (1024 dimensions).
