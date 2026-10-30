@@ -338,6 +338,125 @@ class McpEmbeddingDaoTest {
         cleanup(path);
     }
 
+    private static void clearAll() {
+        DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING");
+        DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING_V2");
+    }
+
+    private static int unmigratedMarkerCount(String filePath) {
+        Integer n = DatabaseAdapter.selectOne(
+                "SELECT COUNT(*) FROM MCP_EMBEDDING WHERE FILE_PATH = ? AND MIGRATED_AT IS NULL",
+                DatabaseAdapter.RESULT_SET_INT_TRANSFORM, filePath);
+        return n == null ? 0 : n;
+    }
+
+    @Test
+    void findNextUnmigratedOrdersLocalThenIcelandicThenOthers() {
+        clearAll();
+        McpEmbeddingDao.upsert(embedding("/tmp/mig-order-cnn.txt", 0, "https://www.cnn.com/y", "c", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding("/tmp/mig-order-visir.txt", 0, "https://www.visir.is/x", "c", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding("/tmp/mig-order-diary.txt", 0, "D:\\diary\\a.txt", "c", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding("/tmp/mig-order-done.txt", 0, "D:\\diary\\done.txt", "c", "nomic-embed-text"));
+        DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = '2026-01-01T00:00:00Z' "
+                + "WHERE FILE_PATH='/tmp/mig-order-done.txt'");
+
+        assertEquals(List.of("/tmp/mig-order-diary.txt", "/tmp/mig-order-visir.txt", "/tmp/mig-order-cnn.txt"),
+                McpEmbeddingDao.findNextUnmigratedFilePaths(10));
+        assertEquals(List.of("/tmp/mig-order-diary.txt", "/tmp/mig-order-visir.txt"),
+                McpEmbeddingDao.findNextUnmigratedFilePaths(2));
+        clearAll();
+    }
+
+    @Test
+    void findUnmigratedChunksReturnsChunksOrderedByIndex() {
+        String path = "/tmp/mig-chunks.txt";
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://chunks.com", "second", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://chunks.com", "first", "nomic-embed-text"));
+
+        List<McpEmbeddingDao.ChunkToMigrate> chunks = McpEmbeddingDao.findUnmigratedChunks(path);
+
+        assertEquals(List.of(new McpEmbeddingDao.ChunkToMigrate(0, "http://chunks.com", "first"),
+                new McpEmbeddingDao.ChunkToMigrate(1, "http://chunks.com", "second")), chunks);
+        cleanupBoth(path);
+    }
+
+    @Test
+    void commitMigrationWritesV2RowsAndMarksOldRows() {
+        String path = "/tmp/mig-commit.txt";
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://commit.com", "a", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://commit.com", "b", "nomic-embed-text"));
+
+        boolean ok = McpEmbeddingDao.commitMigration(path, List.of(
+                embedding1024(path, 0, "http://commit.com", "a"),
+                embedding1024(path, 1, "http://commit.com", "b")), "2026-02-02T00:00:00Z");
+
+        assertTrue(ok);
+        assertEquals(0, unmigratedMarkerCount(path));
+        assertEquals(2, countRows("MCP_EMBEDDING_V2", path));
+        cleanupBoth(path);
+    }
+
+    @Test
+    void commitMigrationRollsBackWhenOldRowsChangedConcurrently() {
+        String path = "/tmp/mig-rollback.txt";
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://rollback.com", "a", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://rollback.com", "b", "nomic-embed-text"));
+        DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING WHERE FILE_PATH='" + path + "' AND CHUNK_INDEX=1");
+
+        boolean ok = McpEmbeddingDao.commitMigration(path, List.of(
+                embedding1024(path, 0, "http://rollback.com", "a"),
+                embedding1024(path, 1, "http://rollback.com", "b")), "2026-02-02T00:00:00Z");
+
+        assertFalse(ok);
+        assertEquals(0, countRows("MCP_EMBEDDING_V2", path));
+        assertEquals(1, unmigratedMarkerCount(path));
+        cleanupBoth(path);
+    }
+
+    @Test
+    void commitMigrationIsNoopForAlreadyMigratedFile() {
+        String path = "/tmp/mig-noop.txt";
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://noop.com", "a", "nomic-embed-text"));
+        List<McpEmbedding> v2 = List.of(embedding1024(path, 0, "http://noop.com", "a"));
+
+        assertTrue(McpEmbeddingDao.commitMigration(path, v2, "2026-02-02T00:00:00Z"));
+        assertFalse(McpEmbeddingDao.commitMigration(path, v2, "2026-02-03T00:00:00Z"));
+
+        assertEquals(1, countRows("MCP_EMBEDDING_V2", path));
+        cleanupBoth(path);
+    }
+
+    @Test
+    void upsertDualMarksOldRowsMigratedImmediately() {
+        String path = "/tmp/mig-dual.txt";
+        McpEmbeddingDao.upsertDual(List.of(embedding(path, 0, "http://dual.com", "a", "nomic-embed-text")),
+                List.of(embedding1024(path, 0, "http://dual.com", "a")), "2026-02-02T00:00:00Z");
+        // second call exercises the conflict-update path
+        McpEmbeddingDao.upsertDual(List.of(embedding(path, 0, "http://dual.com", "a2", "nomic-embed-text")),
+                List.of(embedding1024(path, 0, "http://dual.com", "a2")), "2026-02-03T00:00:00Z");
+
+        assertEquals(0, unmigratedMarkerCount(path));
+        assertEquals(1, countRows("MCP_EMBEDDING", path));
+        assertEquals(1, countRows("MCP_EMBEDDING_V2", path));
+        cleanupBoth(path);
+    }
+
+    @Test
+    void migrationStatusCountsFilesAndChunks() {
+        clearAll();
+        String done = "/tmp/mig-status-done.txt";
+        String open = "/tmp/mig-status-open.txt";
+        McpEmbeddingDao.upsert(embedding(done, 0, "http://status-done.com", "a", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(done, 1, "http://status-done.com", "b", "nomic-embed-text"));
+        for (int i = 0; i < 3; i++) {
+            McpEmbeddingDao.upsert(embedding(open, i, "http://status-open.com", "c" + i, "nomic-embed-text"));
+        }
+        DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = '2026-01-01T00:00:00Z' WHERE FILE_PATH='" + done + "'");
+
+        assertEquals(new McpEmbeddingDao.MigrationStatus(1, 1, 2, 3), McpEmbeddingDao.migrationStatus());
+        clearAll();
+    }
+
     @Test
     void findSimilarLimitsToTopK() {
         String pathA = "/tmp/dao-test-similar-3-a.txt";
