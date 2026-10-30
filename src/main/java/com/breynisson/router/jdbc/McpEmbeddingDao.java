@@ -28,10 +28,12 @@ public class McpEmbeddingDao {
                 DatabaseAdapter.RESULT_SET_STRING_TRANSFORM));
     }
 
+    /** File paths for a source across both tables (new content lives only in MCP_EMBEDDING_V2). */
     public static Set<String> findFilePathsBySourceUrl(String sourceUrl) {
         return Set.copyOf(DatabaseAdapter.selectList(
-                "SELECT DISTINCT FILE_PATH FROM " + TABLE + " WHERE SOURCE_URL = ?",
-                DatabaseAdapter.RESULT_SET_STRING_TRANSFORM, sourceUrl));
+                "SELECT FILE_PATH FROM " + TABLE + " WHERE SOURCE_URL = ? "
+              + "UNION SELECT FILE_PATH FROM " + TABLE_V2 + " WHERE SOURCE_URL = ?",
+                DatabaseAdapter.RESULT_SET_STRING_TRANSFORM, sourceUrl, sourceUrl));
     }
 
     public static void upsert(McpEmbedding embedding) {

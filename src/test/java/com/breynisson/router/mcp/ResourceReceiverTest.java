@@ -79,6 +79,20 @@ class ResourceReceiverTest {
     }
 
     @Test
+    void deleteExistingForRemovesV2OnlyFileAndRows() throws IOException {
+        ResourceReceiver receiver = new ResourceReceiver(dataDir.toString());
+        String sourceUrl = "http://v2-only-source.com";
+        Path staleFile = receiver.addContent(AddContentRequests.of(sourceUrl, "Old", "old content"));
+        McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, new McpEmbedding(staleFile.toAbsolutePath().toString(), 0,
+                sourceUrl, "old content", new float[1024], "bge-m3", "2026-01-01T00:00:00Z"));
+
+        receiver.deleteExistingFor(sourceUrl);
+
+        assertFalse(Files.exists(staleFile), "V2-only resource file should be deleted");
+        assertTrue(McpEmbeddingDao.findFilePathsBySourceUrl(sourceUrl).isEmpty(), "V2 rows should be deleted");
+    }
+
+    @Test
     void deleteExistingForLeavesOtherSourcesUntouched() throws IOException {
         ResourceReceiver receiver = new ResourceReceiver(dataDir.toString());
 

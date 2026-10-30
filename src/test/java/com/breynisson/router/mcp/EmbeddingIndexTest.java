@@ -13,7 +13,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -201,16 +200,34 @@ class EmbeddingIndexTest {
         new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(f);
         EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
                 v2Settings(text -> v2(1.0f), 0f));
-        index.incompleteTtlMillis = 50;
+        index.incompleteTtlMillis = 60_000;
 
         assertFalse(index.migrationComplete());
         markMigrated(f);
-        assertFalse(index.migrationComplete()); // still cached within TTL
-        Thread.sleep(120);
+        assertFalse(index.migrationComplete()); // cached false within TTL
+        index.incompleteTtlMillis = 0; // TTL elapsed
         assertTrue(index.migrationComplete());
         DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = NULL WHERE FILE_PATH='"
                 + f.toAbsolutePath() + "'");
         assertTrue(index.migrationComplete()); // true is sticky
+        cleanup(f);
+    }
+
+    @Test
+    void findSimilarSurvivesFailingCompletenessCheck() throws Exception {
+        Path f = write("cfail.txt", "http://cfail.com", "doc cfail");
+        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(f);
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(), "nomic-embed-text",
+                "", "", 0f, "", Optional.of(v2Settings(text -> v2(1.0f), 0f))) {
+            @Override
+            long remainingChunks() {
+                throw new IllegalStateException("db down");
+            }
+        };
+
+        assertFalse(index.migrationComplete());
+        List<EmbeddingIndex.ScoredResult> results = assertDoesNotThrow(() -> index.findSimilar("q", 5));
+        assertEquals(1, results.size()); // falls back to the legacy table
         cleanup(f);
     }
 

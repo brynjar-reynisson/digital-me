@@ -154,6 +154,19 @@ class McpEmbeddingDaoTest {
     }
 
     @Test
+    void findFilePathsBySourceUrlIncludesV2OnlyAndDeduplicatesUnion() {
+        String v2Only = "/tmp/dao-union-v2only.txt";
+        String both = "/tmp/dao-union-both.txt";
+        McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, embedding1024(v2Only, 0, "http://union.com", "a"));
+        McpEmbeddingDao.upsert(embedding(both, 0, "http://union.com", "b", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, embedding1024(both, 0, "http://union.com", "b"));
+
+        assertEquals(Set.of(v2Only, both), McpEmbeddingDao.findFilePathsBySourceUrl("http://union.com"));
+        cleanupBoth(v2Only);
+        cleanupBoth(both);
+    }
+
+    @Test
     void findFilePathsBySourceUrlReturnsEmptyForUnknownSource() {
         assertTrue(McpEmbeddingDao.findFilePathsBySourceUrl("http://never-indexed.com").isEmpty());
     }

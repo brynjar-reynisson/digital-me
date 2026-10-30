@@ -262,6 +262,19 @@ class IndexPageTest {
         assertTrue(html.contains("Hello from claude session"));
     }
 
+    @Test
+    void localFileResolvesNonPathSourceUrlForV2OnlyRows() throws IOException {
+        String sourceUrl = "claude://v2-project/v2-uuid";
+        Path resourceFile = tempDir.resolve("v2-only-claude.txt");
+        Files.writeString(resourceFile, sourceUrl + "\nHello from v2 only session");
+        McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, v2Row(resourceFile.toAbsolutePath().toString(), sourceUrl));
+        try {
+            assertTrue(indexPage.localFile(sourceUrl).contains("Hello from v2 only session"));
+        } finally {
+            McpEmbeddingDao.deleteByFilePath(resourceFile.toAbsolutePath().toString());
+        }
+    }
+
     private static AddContentRequest request(String source, String name, String content) {
         return AddContentRequests.of(source, name, content);
     }

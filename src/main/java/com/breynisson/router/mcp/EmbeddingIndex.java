@@ -105,10 +105,23 @@ public class EmbeddingIndex {
         if (migrationCompleteCached) return true;
         long now = System.currentTimeMillis();
         if (incompleteCheckedAtMillis != 0 && now - incompleteCheckedAtMillis < incompleteTtlMillis) return false;
-        boolean complete = McpEmbeddingDao.migrationStatus().remainingChunks() == 0;
+        boolean complete;
+        try {
+            complete = remainingChunks() == 0;
+        } catch (Exception e) {
+            // Treat a failed check as "not complete" (legacy search keeps working); the failure is
+            // cached like any other false for the TTL so a flapping DB is not hammered per search.
+            log.warn("Migration completeness check failed", e);
+            complete = false;
+        }
         if (complete) migrationCompleteCached = true;
         else incompleteCheckedAtMillis = now;
         return complete;
+    }
+
+    /** Unmigrated legacy chunk count; package-visible so tests can simulate a DB failure. */
+    long remainingChunks() {
+        return McpEmbeddingDao.migrationStatus().remainingChunks();
     }
 
     /**
