@@ -66,7 +66,7 @@ digital-me/
 │   │   ├── ResourceReceiver.java    Writes MCP client content to mcp-resources/
 │   │   ├── EmbeddingClient.java     Functional interface: float[] embed(String text)
 │   │   ├── OllamaEmbeddingClient.java  HTTP client for Ollama /api/embeddings
-│   │   ├── EmbeddingIndex.java      Postgres pgvector index; queries via McpEmbeddingDao; dual-writes + rank-fuses nomic/bge-m3 when v2 enabled
+│   │   ├── EmbeddingIndex.java      Postgres pgvector index; queries via McpEmbeddingDao; searches nomic until migration completes, then bge-m3; writes new embeddings to bge-m3 only when v2 enabled
 │   │   ├── EmbeddingMigrator.java   Background backfill of MCP_EMBEDDING_V2 (bge-m3) from the legacy table
 │   │   ├── V2Settings.java          Record: bge-m3 client/model/prefixes/min-score (bean only when embedding.v2.enabled=true)
 │   │   ├── SummarizeClient.java     Functional interface: String summarize(String text)

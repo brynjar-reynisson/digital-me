@@ -102,11 +102,15 @@ Within a tier, newest `INDEXED_AT` first. Because search fuses both tables throu
 
 ### Dual-write for new content
 
+> Superseded - see Amendment 2026-10-30 at the end of this document.
+
 While `embedding.v2.enabled=true`, `EmbeddingIndex.indexFile()` embeds each chunk with **both** models. If both succeed the old rows are written with `MIGRATED_AT` set and the V2 rows in the same transaction. If the bge-m3 embedding fails (Ollama/model problem) the file is written to the old table only with `MIGRATED_AT` left `NULL`, and the backfill worker catches it later — so the backfill is the universal catch-up mechanism and dual-write failures can never leave a gap.
 
 Old-table writes continue during the soak period so rolling back remains valid.
 
 ### Search: two tables, rank fusion
+
+> Superseded - see Amendment 2026-10-30 at the end of this document.
 
 `EmbeddingIndex.findSimilar()`:
 1. Embed the query with each model (nomic with `search_query:`, bge-m3 with no prefix). A model that returns null contributes no results (the other side still serves).
@@ -164,3 +168,13 @@ Following `docs/testing.md` (isolated Postgres schema per class, `EmbeddingClien
 1. **`embedding.v2.min-score` default** — to be calibrated against real queries before enabling (see Search).
 2. **Chunk size** — bge-m3 supports 8,192 tokens, so larger chunks could improve recall for long documents; deferred to keep the migration 1:1 and low-risk.
 3. **Soak duration before cleanup** — one week suggested.
+
+## Amendment 2026-10-30 (after the live run)
+
+Live testing showed that dual-write (every new chunk embedded by both nomic and bge-m3) and two-model fused search forced Ollama to swap models in and out of memory on a small iGPU, making searches take 10-13 s. The design was simplified to one model at a time:
+
+- **New embeddings:** when `embedding.v2.enabled=true`, `indexFile` embeds with bge-m3 only and writes only to `MCP_EMBEDDING_V2`. The legacy table is untouched and the nomic client is not called. If any chunk embed fails, nothing is written and the file is retried on the next pass.
+- **Search:** no more fusion. While the migration is incomplete, search queries only the legacy table with nomic (no `MIGRATED_AT` filter, so migrated files remain searchable through their nomic rows). When the migration is complete (`remainingChunks == 0`, cached: true permanently, false for 30 s) search queries only `MCP_EMBEDDING_V2` with bge-m3, using the v2 query prefix and min-score. The flip is automatic.
+- **Accepted consequence:** content added after v2 is enabled is not semantically searchable until the migration completes; keyword (Lucene) search still finds it.
+- **indexAll / reconcile:** a file counts as indexed if present in either table, and stale-file reconciliation uses the union of both tables' paths, so V2-only files are not re-embedded at startup and their rows are removed when the file is deleted.
+- Removed: reciprocal rank fusion and `McpEmbeddingDao.upsertDual`.

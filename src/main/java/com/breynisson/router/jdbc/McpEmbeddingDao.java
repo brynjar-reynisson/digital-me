@@ -19,8 +19,12 @@ public class McpEmbeddingDao {
     private static final ScoredMatchTransform SCORED_MATCH_TRANSFORM = new ScoredMatchTransform();
 
     public static Set<String> findAllFilePaths() {
+        return findAllFilePaths(TABLE);
+    }
+
+    public static Set<String> findAllFilePaths(String table) {
         return Set.copyOf(DatabaseAdapter.selectList(
-                "SELECT DISTINCT FILE_PATH FROM " + TABLE,
+                "SELECT DISTINCT FILE_PATH FROM " + table,
                 DatabaseAdapter.RESULT_SET_STRING_TRANSFORM));
     }
 
@@ -174,19 +178,6 @@ public class McpEmbeddingDao {
                 return false;
             }
             return true;
-        });
-    }
-
-    /** Dual-write: stores a freshly embedded file in both tables, with the legacy rows already marked migrated. */
-    public static void upsertDual(List<McpEmbedding> oldRows, List<McpEmbedding> v2Rows, String migratedAt) {
-        DatabaseAdapter.inTransaction(c -> {
-            for (McpEmbedding row : v2Rows) {
-                upsert(c, TABLE_V2, row, null);
-            }
-            for (McpEmbedding row : oldRows) {
-                upsert(c, TABLE, row, migratedAt);
-            }
-            return null;
         });
     }
 

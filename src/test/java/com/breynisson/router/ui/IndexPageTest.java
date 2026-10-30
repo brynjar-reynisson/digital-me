@@ -137,10 +137,12 @@ class IndexPageTest {
         String unmigratedA = tempDir.resolve("unmigrated-a.txt").toAbsolutePath().toString();
         String unmigratedB = tempDir.resolve("unmigrated-b.txt").toAbsolutePath().toString();
         try {
-            McpEmbeddingDao.upsertDual(
-                    List.of(legacyRow(migratedA, "source-migrated-a"), legacyRow(migratedB, "source-migrated-b")),
-                    List.of(v2Row(migratedA, "source-migrated-a"), v2Row(migratedB, "source-migrated-b")),
-                    "2026-01-02T00:00:00Z");
+            McpEmbeddingDao.upsert(legacyRow(migratedA, "source-migrated-a"));
+            McpEmbeddingDao.upsert(legacyRow(migratedB, "source-migrated-b"));
+            McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, v2Row(migratedA, "source-migrated-a"));
+            McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, v2Row(migratedB, "source-migrated-b"));
+            DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = '2026-01-02T00:00:00Z' "
+                    + "WHERE SOURCE_URL IN ('source-migrated-a', 'source-migrated-b')");
             McpEmbeddingDao.upsert(legacyRow(unmigratedA, "source-unmigrated-a"));
             McpEmbeddingDao.upsert(legacyRow(unmigratedB, "source-unmigrated-b"));
 

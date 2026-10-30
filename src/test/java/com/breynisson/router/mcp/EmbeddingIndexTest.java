@@ -99,49 +99,44 @@ class EmbeddingIndexTest {
         return f;
     }
 
+    private static void markMigrated(Path f) {
+        DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = '2026-01-01T00:00:00Z' WHERE FILE_PATH='"
+                + f.toAbsolutePath() + "'");
+    }
+
     @Test
-    void indexFileWithV2WritesBothTablesAndMarksMigrated() throws Exception {
-        Path f = write("dual.txt", "http://dual.com", "hello dual");
-        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
-                v2Settings(text -> v2(1.0f), 0f));
+    void indexFileWithV2WritesV2RowsOnlyAndNeverCallsLegacyClient() throws Exception {
+        Path f = write("v2only.txt", "http://v2only.com", "hello v2only");
+        AtomicInteger legacyCalls = new AtomicInteger();
+        EmbeddingIndex index = new EmbeddingIndex(text -> { legacyCalls.incrementAndGet(); return v(1.0f); },
+                dataDir.toString(), v2Settings(text -> v2(1.0f), 0f));
         index.indexFile(f);
 
-        assertEquals(1, oldCount(f));
-        assertEquals(0, unmarkedOldCount(f));
         assertEquals(1, v2Count(f));
+        assertEquals(0, oldCount(f));
+        assertEquals(0, legacyCalls.get());
         cleanup(f);
     }
 
     @Test
-    void indexFileWhenV2EmbedFailsWritesOldRowOnlyUnmarked() throws Exception {
+    void indexFileWhenV2EmbedFailsWritesNothing() throws Exception {
         Path f = write("v2fail.txt", "http://v2fail.com", "hello");
         EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
                 v2Settings(text -> null, 0f));
         index.indexFile(f);
 
-        assertEquals(1, unmarkedOldCount(f));
+        assertEquals(0, oldCount(f));
         assertEquals(0, v2Count(f));
         cleanup(f);
     }
 
     @Test
-    void indexFileWhenLegacyEmbedFailsWritesNothing() throws Exception {
-        Path f = write("legacyfail.txt", "http://legacyfail.com", "hello");
-        EmbeddingIndex index = new EmbeddingIndex(text -> null, dataDir.toString(),
-                v2Settings(text -> v2(1.0f), 0f));
-        index.indexFile(f);
-
-        assertEquals(0, oldCount(f));
-        assertEquals(0, v2Count(f));
-    }
-
-    @Test
     void findSimilarWithoutV2IgnoresMigratedMarker() throws Exception {
         Path f = write("marked.txt", "http://marked.com", "hello marked");
-        new EmbeddingIndex(text -> v(1.0f), dataDir.toString(), v2Settings(text -> v2(1.0f), 0f)).indexFile(f);
-        assertEquals(0, unmarkedOldCount(f));
-
         EmbeddingIndex noV2 = new EmbeddingIndex(text -> v(1.0f), dataDir.toString());
+        noV2.indexFile(f);
+        markMigrated(f);
+
         List<EmbeddingIndex.ScoredResult> results = noV2.findSimilar("q", 5);
 
         assertEquals(1, results.size());
@@ -150,102 +145,93 @@ class EmbeddingIndexTest {
     }
 
     @Test
-    void findSimilarFusesDisjointSetsByRank() throws Exception {
-        Path a1 = write("a1.txt", "http://a1.com", "doc a1");
-        Path a2 = write("a2.txt", "http://a2.com", "doc a2");
-        Path b1 = write("b1.txt", "http://b1.com", "doc b1");
-        Path b2 = write("b2.txt", "http://b2.com", "doc b2");
-        AtomicBoolean v2Up = new AtomicBoolean(false);
-        EmbeddingClient old = text -> {
-            if (text.contains("doc a1") || text.contains("doc b1")) return v(1.0f, 0.0f);
-            if (text.contains("doc a2") || text.contains("doc b2")) return v(1.0f, 1.0f);
-            return v(1.0f, 0.0f);
-        };
-        EmbeddingClient second = text -> {
-            if (text.contains("doc")) {
-                if (!v2Up.get()) return null;
-                return text.contains("b1") ? v2(1.0f, 0.0f) : v2(1.0f, 1.0f);
-            }
-            return v2(1.0f, 0.0f);
-        };
-        EmbeddingIndex index = new EmbeddingIndex(old, dataDir.toString(), v2Settings(second, 0f));
-        index.indexFile(a1);
-        index.indexFile(a2);
-        v2Up.set(true);
-        index.indexFile(b1);
-        index.indexFile(b2);
+    void findSimilarWhileMigrationIncompleteUsesLegacyOnlyAndKeepsMigratedFilesSearchable() throws Exception {
+        Path migrated = write("migrated.txt", "http://migrated.com", "doc migrated");
+        Path pending = write("pending.txt", "http://pending.com", "doc pending");
+        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(migrated);
+        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(pending);
+        markMigrated(migrated);
+        AtomicInteger v2Calls = new AtomicInteger();
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
+                v2Settings(text -> { v2Calls.incrementAndGet(); return v2(1.0f); }, 0f));
 
         List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
 
-        assertEquals(4, results.size());
-        assertEquals(Set.of("http://a1.com", "http://b1.com"),
-                Set.of(results.get(0).sourceUrl(), results.get(1).sourceUrl()));
-        assertEquals(Set.of("http://a2.com", "http://b2.com"),
-                Set.of(results.get(2).sourceUrl(), results.get(3).sourceUrl()));
-        cleanup(a1, a2, b1, b2);
+        assertEquals(Set.of("http://migrated.com", "http://pending.com"),
+                results.stream().map(EmbeddingIndex.ScoredResult::sourceUrl).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(0, v2Calls.get());
+        cleanup(migrated, pending);
     }
 
     @Test
-    void findSimilarWithOneModelUnavailableStillServesTheOtherSide() throws Exception {
-        Path f = write("one.txt", "http://one.com", "doc one");
-        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
-                v2Settings(text -> v2(1.0f), 0f));
-        index.indexFile(f);
+    void findSimilarWhenMigrationCompleteUsesV2OnlyWithV2MinScore() throws Exception {
+        Path hit = write("hit.txt", "http://hit.com", "doc hit");
+        Path miss = write("miss.txt", "http://miss.com", "doc miss");
+        Path legacyOnly = write("legacyonly.txt", "http://legacyonly.com", "doc legacy");
+        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(legacyOnly);
+        markMigrated(legacyOnly); // no unmigrated legacy rows -> complete
+        EmbeddingClient second = text -> {
+            if (text.contains("hit")) return v2(1.0f, 0.0f);
+            if (text.contains("miss")) return v2(0.0f, 1.0f);
+            return v2(1.0f, 0.0f); // query
+        };
+        AtomicInteger legacyCalls = new AtomicInteger();
+        EmbeddingIndex index = new EmbeddingIndex(text -> { legacyCalls.incrementAndGet(); return v(1.0f); },
+                dataDir.toString(), "nomic-embed-text", "", "", 0f, "",
+                Optional.of(v2Settings(second, 0.5f)));
+        index.indexFile(hit);
+        index.indexFile(miss);
 
-        // legacy down, v2 up: the v2 side serves
-        EmbeddingIndex legacyDown = new EmbeddingIndex(text -> null, dataDir.toString(),
-                v2Settings(text -> v2(1.0f), 0f));
-        List<EmbeddingIndex.ScoredResult> results = legacyDown.findSimilar("query", 5);
+        List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
+
         assertEquals(1, results.size());
-        assertEquals("http://one.com", results.get(0).sourceUrl());
-
-        // v2 down, legacy up: the migrated file is still served from the legacy (nomic) side
-        EmbeddingIndex v2Down = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
-                v2Settings(text -> null, 0f));
-        List<EmbeddingIndex.ScoredResult> fallback = v2Down.findSimilar("query", 5);
-        assertEquals(1, fallback.size());
-        assertEquals("http://one.com", fallback.get(0).sourceUrl());
-        cleanup(f);
+        assertEquals("http://hit.com", results.get(0).sourceUrl());
+        assertEquals(0, legacyCalls.get());
+        cleanup(hit, miss, legacyOnly);
     }
 
     @Test
-    void findSimilarDeduplicatesSameSourceInBothTables() throws Exception {
-        Path f = write("both.txt", "http://both.com", "doc both");
+    void migrationCompleteIsFalseWithoutV2() {
+        assertFalse(new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).migrationComplete());
+    }
+
+    @Test
+    void migrationCompleteRechecksFalseAfterTtlAndCachesTrueForever() throws Exception {
+        Path f = write("cache.txt", "http://cache.com", "doc cache");
+        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(f);
         EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
                 v2Settings(text -> v2(1.0f), 0f));
-        index.indexFile(f);
-        // simulate a legacy row for the same source that is still unmigrated
+        index.incompleteTtlMillis = 50;
+
+        assertFalse(index.migrationComplete());
+        markMigrated(f);
+        assertFalse(index.migrationComplete()); // still cached within TTL
+        Thread.sleep(120);
+        assertTrue(index.migrationComplete());
         DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = NULL WHERE FILE_PATH='"
                 + f.toAbsolutePath() + "'");
-
-        List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
-
-        assertEquals(1, results.size());
-        assertEquals("http://both.com", results.get(0).sourceUrl());
+        assertTrue(index.migrationComplete()); // true is sticky
         cleanup(f);
     }
 
     @Test
-    void findSimilarAppliesV2MinScoreToV2SideOnly() throws Exception {
-        Path oldFile = write("oldside.txt", "http://oldside.com", "doc old");
-        Path v2File = write("v2side.txt", "http://v2side.com", "doc v2");
-        AtomicBoolean v2Up = new AtomicBoolean(false);
-        // old side: docs score 1.0 vs query; v2 side: doc v2 is orthogonal to the query
-        EmbeddingClient second = text -> {
-            if (text.contains("doc")) return v2Up.get() ? v2(0.0f, 1.0f) : null;
-            return v2(1.0f, 0.0f);
-        };
-        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f, 0.0f), dataDir.toString(),
-                "nomic-embed-text", "", "", 0.5f, "", Optional.of(v2Settings(second, 0.5f)));
-        index.indexFile(oldFile);
-        v2Up.set(true);
-        index.indexFile(v2File);
+    void indexAllDoesNotReembedV2OnlyFileAndRemovesV2RowsForDeletedFiles() throws Exception {
+        Path kept = write("kept.txt", "http://kept.com", "doc kept");
+        Path gone = write("gone.txt", "http://gone.com", "doc gone");
+        AtomicInteger v2Calls = new AtomicInteger();
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
+                v2Settings(text -> { v2Calls.incrementAndGet(); return v2(1.0f); }, 0f));
+        index.indexFile(kept);
+        index.indexFile(gone);
+        Files.delete(gone);
+        v2Calls.set(0);
 
-        List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
+        index.indexAll();
 
-        assertEquals(1, results.size());
-        assertEquals("http://oldside.com", results.get(0).sourceUrl());
-        cleanup(oldFile, v2File);
+        assertEquals(0, v2Calls.get());
+        assertEquals(1, v2Count(kept));
+        assertEquals(0, v2Count(gone));
+        cleanup(kept, gone);
     }
 
     @Test

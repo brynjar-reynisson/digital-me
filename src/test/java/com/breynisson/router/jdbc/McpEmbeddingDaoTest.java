@@ -444,21 +444,6 @@ class McpEmbeddingDaoTest {
     }
 
     @Test
-    void upsertDualMarksOldRowsMigratedImmediately() {
-        String path = "/tmp/mig-dual.txt";
-        McpEmbeddingDao.upsertDual(List.of(embedding(path, 0, "http://dual.com", "a", "nomic-embed-text")),
-                List.of(embedding1024(path, 0, "http://dual.com", "a")), "2026-02-02T00:00:00Z");
-        // second call exercises the conflict-update path
-        McpEmbeddingDao.upsertDual(List.of(embedding(path, 0, "http://dual.com", "a2", "nomic-embed-text")),
-                List.of(embedding1024(path, 0, "http://dual.com", "a2")), "2026-02-03T00:00:00Z");
-
-        assertEquals(0, unmigratedMarkerCount(path));
-        assertEquals(1, countRows("MCP_EMBEDDING", path));
-        assertEquals(1, countRows("MCP_EMBEDDING_V2", path));
-        cleanupBoth(path);
-    }
-
-    @Test
     void migrationStatusCountsFilesAndChunks() {
         clearAll();
         String done = "/tmp/mig-status-done.txt";

@@ -17,9 +17,7 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -39,7 +37,7 @@ public class EmbeddingIndex {
 
     private static final Logger log = LoggerFactory.getLogger(EmbeddingIndex.class);
     private static final String DEFAULT_MODEL = "nomic-embed-text";
-    private static final int RRF_K = 60;
+    private static final long INCOMPLETE_TTL_MILLIS = 30_000;
 
     private final EmbeddingClient embeddingClient;
     private final Path mcpResourcesDir;
@@ -49,6 +47,11 @@ public class EmbeddingIndex {
     private final float minScore;
     private final boolean migrating;
     private final V2Settings v2;
+
+    /** How long a "migration not complete" answer is cached; package-visible so tests need not sleep 30 s. */
+    volatile long incompleteTtlMillis = INCOMPLETE_TTL_MILLIS;
+    private volatile boolean migrationCompleteCached;
+    private volatile long incompleteCheckedAtMillis;
 
     @Autowired
     public EmbeddingIndex(
@@ -94,6 +97,21 @@ public class EmbeddingIndex {
     }
 
     /**
+     * True once the second-generation model is configured and no legacy chunk remains unmigrated.
+     * A true answer is cached for the life of the instance; a false one for {@link #incompleteTtlMillis}.
+     */
+    boolean migrationComplete() {
+        if (v2 == null) return false;
+        if (migrationCompleteCached) return true;
+        long now = System.currentTimeMillis();
+        if (incompleteCheckedAtMillis != 0 && now - incompleteCheckedAtMillis < incompleteTtlMillis) return false;
+        boolean complete = McpEmbeddingDao.migrationStatus().remainingChunks() == 0;
+        if (complete) migrationCompleteCached = true;
+        else incompleteCheckedAtMillis = now;
+        return complete;
+    }
+
+    /**
      * Indexes any mcp-resources files not yet in the embedding table. Runs async at startup.
      * Skipped during the one-time SQLite-to-Postgres migration run: this would otherwise
      * re-embed the entire mcp-resources tree via Ollama concurrently with the migrator's own
@@ -113,7 +131,8 @@ public class EmbeddingIndex {
             Set<String> diskPaths = listFilePaths();
             reconcileStaleFiles(diskPaths);
             McpEmbeddingDao.deleteByModelNot(model);
-            Set<String> indexed = McpEmbeddingDao.findAllFilePaths();
+            Set<String> indexed = new HashSet<>(McpEmbeddingDao.findAllFilePaths());
+            if (v2 != null) indexed.addAll(McpEmbeddingDao.findAllFilePaths(McpEmbeddingDao.TABLE_V2));
             for (String path : diskPaths) {
                 if (!indexed.contains(path)) indexFile(Paths.get(path));
             }
@@ -142,7 +161,9 @@ public class EmbeddingIndex {
     }
 
     private void reconcileStaleFiles(Set<String> diskPaths) {
-        for (String dbPath : McpEmbeddingDao.findAllFilePaths()) {
+        Set<String> dbPaths = new HashSet<>(McpEmbeddingDao.findAllFilePaths());
+        if (v2 != null) dbPaths.addAll(McpEmbeddingDao.findAllFilePaths(McpEmbeddingDao.TABLE_V2));
+        for (String dbPath : dbPaths) {
             if (!diskPaths.contains(dbPath)) {
                 McpEmbeddingDao.deleteByFilePath(dbPath);
             }
@@ -159,34 +180,25 @@ public class EmbeddingIndex {
             String filePath = file.toAbsolutePath().toString();
             String indexedAt = Instant.now().toString();
 
+            // With the second-generation model configured, new content is embedded by it alone and
+            // written only to MCP_EMBEDDING_V2 (one model resident in Ollama at a time).
+            EmbeddingClient client = v2 != null ? v2.client() : embeddingClient;
+            String prefix = v2 != null ? v2.documentPrefix() : documentPrefix;
+            String rowModel = v2 != null ? v2.model() : model;
+            String table = v2 != null ? McpEmbeddingDao.TABLE_V2 : McpEmbeddingDao.TABLE;
+
             List<com.breynisson.router.jdbc.model.McpEmbedding> rows = new ArrayList<>();
-            List<com.breynisson.router.jdbc.model.McpEmbedding> v2Rows = v2 == null ? null : new ArrayList<>();
             List<String> chunks = Chunker.chunk(body);
             for (int i = 0; i < chunks.size(); i++) {
                 String chunkText = chunks.get(i);
-                String toEmbed = documentPrefix.isEmpty() ? chunkText : documentPrefix + " " + chunkText;
-                float[] embedding = embeddingClient.embed(toEmbed);
+                String toEmbed = prefix.isEmpty() ? chunkText : prefix + " " + chunkText;
+                float[] embedding = client.embed(toEmbed);
                 if (embedding == null) return; // Ollama unavailable — retry the whole file next pass
-                float[] normalized = normalize(embedding);
                 rows.add(new com.breynisson.router.jdbc.model.McpEmbedding(
-                        filePath, i, sourceUrl, chunkText, normalized, model, indexedAt));
-                if (v2Rows != null) {
-                    String v2Text = v2.documentPrefix().isEmpty() ? chunkText : v2.documentPrefix() + " " + chunkText;
-                    float[] v2Embedding = v2.client().embed(v2Text);
-                    if (v2Embedding == null) {
-                        v2Rows = null; // v2 unavailable — write legacy rows unmarked; background migration catches up
-                    } else {
-                        v2Rows.add(new com.breynisson.router.jdbc.model.McpEmbedding(
-                                filePath, i, sourceUrl, chunkText, normalize(v2Embedding), v2.model(), indexedAt));
-                    }
-                }
+                        filePath, i, sourceUrl, chunkText, normalize(embedding), rowModel, indexedAt));
             }
-            if (v2Rows != null) {
-                McpEmbeddingDao.upsertDual(rows, v2Rows, indexedAt);
-            } else {
-                for (com.breynisson.router.jdbc.model.McpEmbedding row : rows) {
-                    McpEmbeddingDao.upsert(row);
-                }
+            for (com.breynisson.router.jdbc.model.McpEmbedding row : rows) {
+                McpEmbeddingDao.upsert(table, row);
             }
             log.debug("Indexed {} chunk(s) for {}", rows.size(), file.getFileName());
         } catch (Exception e) {
@@ -207,64 +219,22 @@ public class EmbeddingIndex {
      */
     public List<ScoredResult> findSimilar(String query, int topK) {
         lastSearchMillis = System.currentTimeMillis();
-        String prefixedQuery = queryPrefix.isEmpty() ? query : queryPrefix + " " + query;
-        float[] rawQueryEmbedding = embeddingClient.embed(prefixedQuery);
-        float[] queryVector = rawQueryEmbedding == null ? null : normalize(rawQueryEmbedding);
-
-        float[] v2QueryVector = null;
-        if (v2 != null) {
-            String v2Query = v2.queryPrefix().isEmpty() ? query : v2.queryPrefix() + " " + query;
-            float[] raw = v2.client().embed(v2Query);
-            if (raw != null) v2QueryVector = normalize(raw);
-        }
-
-        List<McpEmbeddingDao.ScoredMatch> oldSide = List.of();
-        List<McpEmbeddingDao.ScoredMatch> v2Side = List.of();
+        // One model at a time: legacy (nomic) until the migration completes, then bge-m3 only.
+        boolean useV2 = migrationComplete();
+        String table = useV2 ? McpEmbeddingDao.TABLE_V2 : McpEmbeddingDao.TABLE;
+        EmbeddingClient client = useV2 ? v2.client() : embeddingClient;
+        String prefix = useV2 ? v2.queryPrefix() : queryPrefix;
+        float threshold = useV2 ? v2.minScore() : minScore;
+        String prefixedQuery = prefix.isEmpty() ? query : prefix + " " + query;
+        float[] raw = client.embed(prefixedQuery);
+        if (raw == null) return List.of();
         try {
-            if (queryVector != null) {
-                // Hide migrated rows only when the v2 side can actually serve them
-                oldSide = McpEmbeddingDao.findSimilar(McpEmbeddingDao.TABLE, queryVector, minScore, topK,
-                        v2 != null && v2QueryVector != null);
-            }
+            return McpEmbeddingDao.findSimilar(table, normalize(raw), threshold, topK, false)
+                    .stream().map(EmbeddingIndex::toResult).toList();
         } catch (Exception e) {
             log.warn("Embedding search failed", e);
+            return List.of();
         }
-        try {
-            if (v2QueryVector != null) {
-                v2Side = McpEmbeddingDao.findSimilar(McpEmbeddingDao.TABLE_V2, v2QueryVector, v2.minScore(), topK, false);
-            }
-        } catch (Exception e) {
-            log.warn("Embedding v2 search failed", e);
-        }
-        if (v2 == null) {
-            return oldSide.stream().map(EmbeddingIndex::toResult).toList();
-        }
-        return fuse(oldSide, v2Side, topK);
-    }
-
-    /** Reciprocal rank fusion of the two sides on sourceUrl; each result keeps its best-ranked entry's own score. */
-    private static List<ScoredResult> fuse(
-            List<McpEmbeddingDao.ScoredMatch> a, List<McpEmbeddingDao.ScoredMatch> b, int topK) {
-        Map<String, Double> fused = new LinkedHashMap<>();
-        Map<String, McpEmbeddingDao.ScoredMatch> best = new LinkedHashMap<>();
-        Map<String, Integer> bestRank = new LinkedHashMap<>();
-        for (List<McpEmbeddingDao.ScoredMatch> side : List.of(a, b)) {
-            for (int i = 0; i < side.size(); i++) {
-                McpEmbeddingDao.ScoredMatch m = side.get(i);
-                int rank = i + 1;
-                fused.merge(m.sourceUrl(), 1.0 / (RRF_K + rank), Double::sum);
-                Integer prev = bestRank.get(m.sourceUrl());
-                if (prev == null || rank < prev) {
-                    bestRank.put(m.sourceUrl(), rank);
-                    best.put(m.sourceUrl(), m);
-                }
-            }
-        }
-        return fused.entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                .limit(topK)
-                .map(e -> toResult(best.get(e.getKey())))
-                .toList();
     }
 
     private static ScoredResult toResult(McpEmbeddingDao.ScoredMatch m) {
