@@ -414,6 +414,23 @@ class McpEmbeddingDaoTest {
     }
 
     @Test
+    void commitMigrationRollsBackWhenChunkTextChangedConcurrently() {
+        String path = "/tmp/mig-textchange.txt";
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://textchange.com", "a", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://textchange.com", "b", "nomic-embed-text"));
+        List<McpEmbedding> v2 = List.of(
+                embedding1024(path, 0, "http://textchange.com", "a"),
+                embedding1024(path, 1, "http://textchange.com", "b"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://textchange.com", "a-new", "nomic-embed-text"));
+
+        assertFalse(McpEmbeddingDao.commitMigration(path, v2, "2026-02-02T00:00:00Z"));
+
+        assertEquals(0, countRows("MCP_EMBEDDING_V2", path));
+        assertEquals(2, unmigratedMarkerCount(path));
+        cleanupBoth(path);
+    }
+
+    @Test
     void commitMigrationIsNoopForAlreadyMigratedFile() {
         String path = "/tmp/mig-noop.txt";
         McpEmbeddingDao.upsert(embedding(path, 0, "http://noop.com", "a", "nomic-embed-text"));

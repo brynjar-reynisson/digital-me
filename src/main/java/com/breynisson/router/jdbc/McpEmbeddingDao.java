@@ -156,12 +156,18 @@ public class McpEmbeddingDao {
             for (McpEmbedding row : v2Rows) {
                 upsert(c, TABLE_V2, row, null);
             }
-            int updated;
+            // Per-row and text-sensitive: a chunk re-written since it was embedded no longer matches
+            int updated = 0;
             try (PreparedStatement ps = c.prepareStatement(
-                    "UPDATE " + TABLE + " SET MIGRATED_AT = ? WHERE FILE_PATH = ? AND MIGRATED_AT IS NULL")) {
-                ps.setString(1, migratedAt);
-                ps.setString(2, filePath);
-                updated = ps.executeUpdate();
+                    "UPDATE " + TABLE + " SET MIGRATED_AT = ? WHERE FILE_PATH = ? AND CHUNK_INDEX = ? "
+                  + "AND CHUNK_TEXT = ? AND MIGRATED_AT IS NULL")) {
+                for (McpEmbedding row : v2Rows) {
+                    ps.setString(1, migratedAt);
+                    ps.setString(2, filePath);
+                    ps.setInt(3, row.chunkIndex);
+                    ps.setString(4, row.chunkText);
+                    updated += ps.executeUpdate();
+                }
             }
             if (updated != v2Rows.size()) {
                 c.rollback();
