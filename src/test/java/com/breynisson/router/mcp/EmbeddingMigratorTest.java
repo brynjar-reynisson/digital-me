@@ -268,4 +268,35 @@ class EmbeddingMigratorTest {
         assertEquals(0, embeds[0]);
         assertEquals(1, McpEmbeddingDao.migrationStatus().remainingFiles());
     }
+
+    @Test
+    void blankChunkIsMarkedMigratedWithoutEmbeddingOrV2Row() {
+        addOld("/a", "http://x.com/a", "\n", "real");
+        List<String> seen = new CopyOnWriteArrayList<>();
+        EmbeddingMigrator m = new EmbeddingMigrator(settings(t -> {
+            seen.add(t);
+            return vec(1024);
+        }));
+        assertEquals(1, m.migrateBatch(10));
+        assertEquals(List.of("doc: real"), seen);
+        assertEquals(1, count("MCP_EMBEDDING_V2", "FILE_PATH = '/a'"));
+        assertEquals(0, count("MCP_EMBEDDING", "FILE_PATH = '/a' AND MIGRATED_AT IS NULL"));
+        assertEquals(0, m.migrateBatch(10));
+    }
+
+    @Test
+    void allBlankFileCommitsWithZeroV2RowsAndNeverCallsClient() {
+        addOld("/a", "http://x.com/a", "\n");
+        addOld("/b", "http://x.com/b", "real");
+        List<String> seen = new CopyOnWriteArrayList<>();
+        EmbeddingMigrator m = new EmbeddingMigrator(settings(t -> {
+            seen.add(t);
+            return vec(1024);
+        }));
+        assertEquals(2, m.migrateBatch(10));
+        assertEquals(List.of("doc: real"), seen);
+        assertEquals(0, count("MCP_EMBEDDING_V2", "FILE_PATH = '/a'"));
+        assertEquals(0, McpEmbeddingDao.migrationStatus().remainingChunks());
+        assertEquals(0, McpEmbeddingDao.migrationStatus().remainingFiles());
+    }
 }

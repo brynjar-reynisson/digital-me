@@ -204,6 +204,8 @@ public class EmbeddingIndex {
             List<String> chunks = Chunker.chunk(body);
             for (int i = 0; i < chunks.size(); i++) {
                 String chunkText = chunks.get(i);
+                // V2 only: a blank chunk has nothing to embed, skip it rather than abort the file
+                if (v2 != null && OllamaEmbeddingClient.isBlankAfterNormalisation(chunkText)) continue;
                 String toEmbed = prefix.isEmpty() ? chunkText : prefix + " " + chunkText;
                 float[] embedding = client.embed(toEmbed);
                 if (embedding == null) return; // Ollama unavailable — retry the whole file next pass

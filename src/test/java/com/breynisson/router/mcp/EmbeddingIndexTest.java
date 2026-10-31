@@ -510,4 +510,40 @@ class EmbeddingIndexTest {
         assertFalse(index.searchedWithin(java.time.Duration.ofMillis(5)));
         assertFalse(index.searchedWithin(java.time.Duration.ZERO));
     }
+
+    @Test
+    void indexFileWithV2SkipsBlankChunksKeepingOriginalIndexes() throws Exception {
+        Path f = write("v2blank.txt", "http://v2blank.com", " ".repeat(Chunker.TARGET_CHUNK_CHARS) + "hello");
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
+                v2Settings(text -> v2(1.0f), 0f));
+        index.indexFile(f);
+
+        assertEquals(1, v2Count(f));
+        assertEquals(1, count("MCP_EMBEDDING_V2", " AND CHUNK_INDEX = 1", f));
+        cleanup(f);
+    }
+
+    @Test
+    void indexFileWithV2AllBlankWritesNothingAndDoesNotThrow() throws Exception {
+        Path f = write("v2allblank.txt", "http://v2allblank.com", "\n");
+        AtomicInteger calls = new AtomicInteger();
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
+                v2Settings(text -> { calls.incrementAndGet(); return v2(1.0f); }, 0f));
+        index.indexFile(f);
+
+        assertEquals(0, v2Count(f));
+        assertEquals(0, calls.get());
+        cleanup(f);
+    }
+
+    @Test
+    void indexFileWithV2NullEmbeddingForNonBlankChunkStillAbortsFile() throws Exception {
+        Path f = write("v2nullreal.txt", "http://v2nullreal.com", " ".repeat(Chunker.TARGET_CHUNK_CHARS) + "hello");
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
+                v2Settings(text -> null, 0f));
+        index.indexFile(f);
+
+        assertEquals(0, v2Count(f));
+        cleanup(f);
+    }
 }

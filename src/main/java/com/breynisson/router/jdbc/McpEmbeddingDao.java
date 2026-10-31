@@ -158,6 +158,15 @@ public class McpEmbeddingDao {
      * was re-indexed or deleted since its chunks were read, or it was already migrated.
      */
     public static boolean commitMigration(String filePath, List<McpEmbedding> v2Rows, String migratedAt) {
+        return commitMigration(filePath, v2Rows, List.of(), migratedAt);
+    }
+
+    /**
+     * As {@link #commitMigration(String, List, String)}, additionally marking {@code blankChunks}
+     * (chunks with no embeddable content, hence no V2 row) migrated in the same transaction.
+     */
+    public static boolean commitMigration(String filePath, List<McpEmbedding> v2Rows,
+                                          List<ChunkToMigrate> blankChunks, String migratedAt) {
         return DatabaseAdapter.inTransaction(c -> {
             for (McpEmbedding row : v2Rows) {
                 upsert(c, TABLE_V2, row, null);
@@ -174,8 +183,15 @@ public class McpEmbeddingDao {
                     ps.setString(4, row.chunkText);
                     updated += ps.executeUpdate();
                 }
+                for (ChunkToMigrate blank : blankChunks) {
+                    ps.setString(1, migratedAt);
+                    ps.setString(2, filePath);
+                    ps.setInt(3, blank.chunkIndex());
+                    ps.setString(4, blank.chunkText());
+                    updated += ps.executeUpdate();
+                }
             }
-            if (updated != v2Rows.size()) {
+            if (updated != v2Rows.size() + blankChunks.size()) {
                 c.rollback();
                 return false;
             }

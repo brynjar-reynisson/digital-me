@@ -114,4 +114,20 @@ class OllamaEmbeddingClientTest {
         assertNotNull(capturedPrompt[0]);
         assertTrue(capturedPrompt[0].length() <= 3_000);
     }
+
+    @Test
+    void isBlankAfterNormalisationTrueForEmptyAndWhitespaceOnly() {
+        assertTrue(OllamaEmbeddingClient.isBlankAfterNormalisation(""));
+        assertTrue(OllamaEmbeddingClient.isBlankAfterNormalisation(" "));
+        assertTrue(OllamaEmbeddingClient.isBlankAfterNormalisation("\n"));
+        assertTrue(OllamaEmbeddingClient.isBlankAfterNormalisation("\\n\\n"));
+        assertTrue(OllamaEmbeddingClient.isBlankAfterNormalisation("\t \r"));
+    }
+
+    @Test
+    void isBlankAfterNormalisationFalseForRealContent() {
+        assertFalse(OllamaEmbeddingClient.isBlankAfterNormalisation("a"));
+        assertFalse(OllamaEmbeddingClient.isBlankAfterNormalisation(" a "));
+        assertFalse(OllamaEmbeddingClient.isBlankAfterNormalisation("æ"));
+    }
 }

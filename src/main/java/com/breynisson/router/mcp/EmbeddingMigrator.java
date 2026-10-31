@@ -151,7 +151,13 @@ public class EmbeddingMigrator {
         if (chunks.isEmpty()) return false;
         String indexedAt = Instant.now().toString();
         List<McpEmbedding> rows = new ArrayList<>();
+        List<McpEmbeddingDao.ChunkToMigrate> blanks = new ArrayList<>();
         for (McpEmbeddingDao.ChunkToMigrate chunk : chunks) {
+            // Nothing to embed (Ollama returns no vector for an empty prompt): mark migrated, no V2 row
+            if (OllamaEmbeddingClient.isBlankAfterNormalisation(chunk.chunkText())) {
+                blanks.add(chunk);
+                continue;
+            }
             if (!yieldToInteractiveSearch()) return false;
             String text = v2.documentPrefix().isEmpty() ? chunk.chunkText() : v2.documentPrefix() + " " + chunk.chunkText();
             float[] embedding = v2.client().embed(text);
@@ -159,7 +165,7 @@ public class EmbeddingMigrator {
             rows.add(new McpEmbedding(filePath, chunk.chunkIndex(), chunk.sourceUrl(), chunk.chunkText(),
                     EmbeddingIndex.normalize(embedding), v2.model(), indexedAt));
         }
-        return McpEmbeddingDao.commitMigration(filePath, rows, indexedAt);
+        return McpEmbeddingDao.commitMigration(filePath, rows, blanks, indexedAt);
     }
 
     /** Blocks while an interactive search is active; returns false (interrupt flag restored) if interrupted. */

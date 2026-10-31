@@ -50,6 +50,14 @@ public class OllamaEmbeddingClient implements EmbeddingClient {
         return text.replaceAll("\\s+", " ").strip();
     }
 
+    /**
+     * True if the text is empty once normalised, i.e. {@link #embed} would send Ollama an empty
+     * prompt (for which it returns no embedding). Such chunks carry no content and are never embedded.
+     */
+    public static boolean isBlankAfterNormalisation(String text) {
+        return normalise(text).isEmpty();
+    }
+
     @Override
     public float[] embed(String text) {
         try {

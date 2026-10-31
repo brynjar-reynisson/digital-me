@@ -487,4 +487,54 @@ class McpEmbeddingDaoTest {
         cleanup(pathA);
         cleanup(pathB);
     }
+
+    @Test
+    void commitMigrationWithBlankChunksMarksThemWithoutV2Row() {
+        String path = "/tmp/mig-blank.txt";
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://blank.com", "\n", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://blank.com", "b", "nomic-embed-text"));
+
+        boolean ok = McpEmbeddingDao.commitMigration(path,
+                List.of(embedding1024(path, 1, "http://blank.com", "b")),
+                List.of(new McpEmbeddingDao.ChunkToMigrate(0, "http://blank.com", "\n")),
+                "2026-02-02T00:00:00Z");
+
+        assertTrue(ok);
+        assertEquals(0, unmigratedMarkerCount(path));
+        assertEquals(1, countRows("MCP_EMBEDDING_V2", path));
+        cleanupBoth(path);
+    }
+
+    @Test
+    void commitMigrationRollsBackWhenBlankChunkTextChangedConcurrently() {
+        String path = "/tmp/mig-blank-change.txt";
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://blankchange.com", "\n", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://blankchange.com", "b", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://blankchange.com", "now real", "nomic-embed-text"));
+
+        boolean ok = McpEmbeddingDao.commitMigration(path,
+                List.of(embedding1024(path, 1, "http://blankchange.com", "b")),
+                List.of(new McpEmbeddingDao.ChunkToMigrate(0, "http://blankchange.com", "\n")),
+                "2026-02-02T00:00:00Z");
+
+        assertFalse(ok);
+        assertEquals(0, countRows("MCP_EMBEDDING_V2", path));
+        assertEquals(2, unmigratedMarkerCount(path));
+        cleanupBoth(path);
+    }
+
+    @Test
+    void commitMigrationAllBlankFileCommitsWithZeroV2Rows() {
+        String path = "/tmp/mig-allblank.txt";
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://allblank.com", "\n", "nomic-embed-text"));
+
+        boolean ok = McpEmbeddingDao.commitMigration(path, List.of(),
+                List.of(new McpEmbeddingDao.ChunkToMigrate(0, "http://allblank.com", "\n")),
+                "2026-02-02T00:00:00Z");
+
+        assertTrue(ok);
+        assertEquals(0, unmigratedMarkerCount(path));
+        assertEquals(0, countRows("MCP_EMBEDDING_V2", path));
+        cleanupBoth(path);
+    }
 }

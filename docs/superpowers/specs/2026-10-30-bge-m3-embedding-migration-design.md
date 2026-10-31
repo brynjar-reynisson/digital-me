@@ -178,3 +178,8 @@ Live testing showed that dual-write (every new chunk embedded by both nomic and 
 - **Accepted consequence:** content added after v2 is enabled is not semantically searchable until the migration completes; keyword (Lucene) search still finds it.
 - **indexAll / reconcile:** a file counts as indexed if present in either table, and stale-file reconciliation uses the union of both tables' paths, so V2-only files are not re-embedded at startup and their rows are removed when the file is deleted.
 - Removed: reciprocal rank fusion and `McpEmbeddingDao.upsertDual`.
+
+### Blank chunks
+
+Some legacy chunks are blank once `OllamaEmbeddingClient` normalises them (e.g. the single chunk `"
+"` of an empty `.md` file). Ollama returns `{"embedding":[]}` for an empty prompt, which the client maps to `null`, so such a chunk could never be migrated, the file would be retried and penalised forever, and `remainingChunks` could never reach 0 (the automatic cutover trigger). Blank chunks are therefore never embedded: `OllamaEmbeddingClient.isBlankAfterNormalisation()` (the exact normalisation `embed()` applies) identifies them, `EmbeddingMigrator` marks them migrated in the same transaction as the file's other V2 rows (`commitMigration` overload taking `blankChunks`; an all-blank file commits with zero V2 rows) without touching the failure penalty box, and `EmbeddingIndex.indexFile` (V2 path) skips them instead of aborting the file. They have no V2 row and so are not semantically searchable, which is correct since they are empty.
