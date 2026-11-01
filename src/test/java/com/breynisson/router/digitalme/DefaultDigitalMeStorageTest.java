@@ -78,13 +78,13 @@ class DefaultDigitalMeStorageTest {
     }
 
     /**
-     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(768) NOT NULL (digital-me-db-1.sql) and
-     * pgvector enforces that exact dimension on insert. Test vectors below are zero-padded to 768
+     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(1024) NOT NULL (digital-me-db-1.sql) and
+     * pgvector enforces that exact dimension on insert. Test vectors below are zero-padded to 1024
      * dims via {@link #v}; zero-padding both sides of a cosine comparison leaves the dot product and
      * magnitude (and so the cosine score) identical to the unpadded vectors, so this doesn't change
      * what any test asserts.
      */
-    private static final int DIMENSIONS = 768;
+    private static final int DIMENSIONS = 1024;
 
     private static float[] v(float... values) {
         float[] padded = new float[DIMENSIONS];

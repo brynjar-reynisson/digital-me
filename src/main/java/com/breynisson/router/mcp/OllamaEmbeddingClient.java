@@ -32,7 +32,7 @@ public class OllamaEmbeddingClient implements EmbeddingClient {
 
     public OllamaEmbeddingClient(
             @Value("${ollama.url:http://localhost:11434}") String ollamaUrl,
-            @Value("${ollama.embedding.model:nomic-embed-text}") String model,
+            @Value("${ollama.embedding.model:bge-m3}") String model,
             ObjectMapper objectMapper) {
         this.ollamaUrl = ollamaUrl;
         this.model = model;

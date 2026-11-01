@@ -79,19 +79,7 @@ public class IndexPage {
         health.put("totalChunks", totalChunks);
         health.put("totalFilesOnDisk", totalFilesOnDisk);
         health.put("coveragePercent", coveragePercent);
-        embeddingIndex.migrationStatus().ifPresent(status -> health.put("migration", migrationProgress(status)));
         return health;
-    }
-
-    private static Map<String, Object> migrationProgress(McpEmbeddingDao.MigrationStatus status) {
-        Map<String, Object> migration = new LinkedHashMap<>();
-        migration.put("migratedFiles", status.migratedFiles());
-        migration.put("remainingFiles", status.remainingFiles());
-        migration.put("migratedChunks", status.migratedChunks());
-        migration.put("remainingChunks", status.remainingChunks());
-        migration.put("percentMigrated", roundedPercent(status.migratedChunks(),
-                status.migratedChunks() + status.remainingChunks()));
-        return migration;
     }
 
     /** part/total as a percentage rounded to one decimal; 100.0 when total is zero (nothing to be behind on). */

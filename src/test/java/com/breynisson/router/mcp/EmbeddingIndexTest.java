@@ -11,8 +11,6 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -35,14 +33,14 @@ class EmbeddingIndexTest {
     Path dataDir;
 
     /**
-     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(768) NOT NULL (digital-me-db-1.sql) and
+     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(1024) NOT NULL (digital-me-db-1.sql) and
      * pgvector enforces that exact dimension on insert. The EmbeddingClient lambdas below return
      * short test vectors (e.g. {1.0f, 0.0f}) for readability, so every one of them is zero-padded
-     * to 768 dims via {@link #v} before EmbeddingIndex normalizes/stores it. Zero-padding both
+     * to 1024 dims via {@link #v} before EmbeddingIndex normalizes/stores it. Zero-padding both
      * sides of a cosine comparison leaves the dot product and magnitude (and so the cosine score)
      * identical to the unpadded vectors, so this doesn't change what any test asserts.
      */
-    private static final int DIMENSIONS = 768;
+    private static final int DIMENSIONS = 1024;
 
     private static float[] v(float... values) {
         float[] padded = new float[DIMENSIONS];
@@ -53,42 +51,15 @@ class EmbeddingIndexTest {
     private static void cleanup(Path... files) {
         for (Path f : files)
             DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING WHERE FILE_PATH='" + f.toAbsolutePath() + "'");
-        for (Path f : files)
-            DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING_V2 WHERE FILE_PATH='" + f.toAbsolutePath() + "'");
     }
 
-    private static final int V2_DIMENSIONS = 1024;
-
-    private static float[] v2(float... values) {
-        float[] padded = new float[V2_DIMENSIONS];
-        System.arraycopy(values, 0, padded, 0, values.length);
-        return padded;
-    }
-
-    private static V2Settings v2Settings(EmbeddingClient client, float minScore) {
-        return new V2Settings(client, "bge-m3", "", "", minScore);
-    }
-
-    private static int count(String table, String extraWhere, Path file) {
-        Integer n = DatabaseAdapter.selectOne(
-                "SELECT COUNT(*) FROM " + table + " WHERE FILE_PATH = ?" + extraWhere,
+    private static int count(String extraWhere, Path file) {
+        return DatabaseAdapter.selectOne(
+                "SELECT COUNT(*) FROM MCP_EMBEDDING WHERE FILE_PATH = ?" + extraWhere,
                 rset -> {
                     rset.next();
                     return List.of(rset.getInt(1));
                 }, file.toAbsolutePath().toString());
-        return n;
-    }
-
-    private static int v2Count(Path file) {
-        return count("MCP_EMBEDDING_V2", "", file);
-    }
-
-    private static int unmarkedOldCount(Path file) {
-        return count("MCP_EMBEDDING", " AND MIGRATED_AT IS NULL", file);
-    }
-
-    private static int oldCount(Path file) {
-        return count("MCP_EMBEDDING", "", file);
     }
 
     private Path write(String name, String url, String body) throws Exception {
@@ -96,164 +67,6 @@ class EmbeddingIndexTest {
         Path f = dir.resolve(name);
         Files.writeString(f, url + "\n" + body);
         return f;
-    }
-
-    private static void markMigrated(Path f) {
-        DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = '2026-01-01T00:00:00Z' WHERE FILE_PATH='"
-                + f.toAbsolutePath() + "'");
-    }
-
-    @Test
-    void indexFileWithV2WritesV2RowsOnlyAndNeverCallsLegacyClient() throws Exception {
-        Path f = write("v2only.txt", "http://v2only.com", "hello v2only");
-        AtomicInteger legacyCalls = new AtomicInteger();
-        EmbeddingIndex index = new EmbeddingIndex(text -> { legacyCalls.incrementAndGet(); return v(1.0f); },
-                dataDir.toString(), v2Settings(text -> v2(1.0f), 0f));
-        index.indexFile(f);
-
-        assertEquals(1, v2Count(f));
-        assertEquals(0, oldCount(f));
-        assertEquals(0, legacyCalls.get());
-        cleanup(f);
-    }
-
-    @Test
-    void indexFileWhenV2EmbedFailsWritesNothing() throws Exception {
-        Path f = write("v2fail.txt", "http://v2fail.com", "hello");
-        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
-                v2Settings(text -> null, 0f));
-        index.indexFile(f);
-
-        assertEquals(0, oldCount(f));
-        assertEquals(0, v2Count(f));
-        cleanup(f);
-    }
-
-    @Test
-    void findSimilarWithoutV2IgnoresMigratedMarker() throws Exception {
-        Path f = write("marked.txt", "http://marked.com", "hello marked");
-        EmbeddingIndex noV2 = new EmbeddingIndex(text -> v(1.0f), dataDir.toString());
-        noV2.indexFile(f);
-        markMigrated(f);
-
-        List<EmbeddingIndex.ScoredResult> results = noV2.findSimilar("q", 5);
-
-        assertEquals(1, results.size());
-        assertEquals("http://marked.com", results.get(0).sourceUrl());
-        cleanup(f);
-    }
-
-    @Test
-    void findSimilarWhileMigrationIncompleteUsesLegacyOnlyAndKeepsMigratedFilesSearchable() throws Exception {
-        Path migrated = write("migrated.txt", "http://migrated.com", "doc migrated");
-        Path pending = write("pending.txt", "http://pending.com", "doc pending");
-        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(migrated);
-        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(pending);
-        markMigrated(migrated);
-        AtomicInteger v2Calls = new AtomicInteger();
-        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
-                v2Settings(text -> { v2Calls.incrementAndGet(); return v2(1.0f); }, 0f));
-
-        List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
-
-        assertEquals(Set.of("http://migrated.com", "http://pending.com"),
-                results.stream().map(EmbeddingIndex.ScoredResult::sourceUrl).collect(java.util.stream.Collectors.toSet()));
-        assertEquals(0, v2Calls.get());
-        cleanup(migrated, pending);
-    }
-
-    @Test
-    void findSimilarWhenMigrationCompleteUsesV2OnlyWithV2MinScore() throws Exception {
-        Path hit = write("hit.txt", "http://hit.com", "doc hit");
-        Path miss = write("miss.txt", "http://miss.com", "doc miss");
-        Path legacyOnly = write("legacyonly.txt", "http://legacyonly.com", "doc legacy");
-        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(legacyOnly);
-        markMigrated(legacyOnly); // no unmigrated legacy rows -> complete
-        EmbeddingClient second = text -> {
-            if (text.contains("hit")) return v2(1.0f, 0.0f);
-            if (text.contains("miss")) return v2(0.0f, 1.0f);
-            return v2(1.0f, 0.0f); // query
-        };
-        AtomicInteger legacyCalls = new AtomicInteger();
-        EmbeddingIndex index = new EmbeddingIndex(text -> { legacyCalls.incrementAndGet(); return v(1.0f); },
-                dataDir.toString(), "nomic-embed-text", "", "", 0f, "",
-                Optional.of(v2Settings(second, 0.5f)));
-        index.indexFile(hit);
-        index.indexFile(miss);
-
-        List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
-
-        assertEquals(1, results.size());
-        assertEquals("http://hit.com", results.get(0).sourceUrl());
-        assertEquals(0, legacyCalls.get());
-        cleanup(hit, miss, legacyOnly);
-    }
-
-    @Test
-    void migrationCompleteIsFalseWithoutV2() {
-        assertFalse(new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).migrationComplete());
-    }
-
-    @Test
-    void migrationCompleteRechecksFalseAfterTtlAndCachesTrueForever() throws Exception {
-        Path f = write("cache.txt", "http://cache.com", "doc cache");
-        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(f);
-        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
-                v2Settings(text -> v2(1.0f), 0f));
-        index.incompleteTtlMillis = 60_000;
-
-        assertFalse(index.migrationComplete());
-        markMigrated(f);
-        assertFalse(index.migrationComplete()); // cached false within TTL
-        index.incompleteTtlMillis = 0; // TTL elapsed
-        assertTrue(index.migrationComplete());
-        DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = NULL WHERE FILE_PATH='"
-                + f.toAbsolutePath() + "'");
-        assertTrue(index.migrationComplete()); // true is sticky
-        cleanup(f);
-    }
-
-    @Test
-    void findSimilarSurvivesFailingCompletenessCheck() throws Exception {
-        Path f = write("cfail.txt", "http://cfail.com", "doc cfail");
-        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(f);
-        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(), "nomic-embed-text",
-                "", "", 0f, "", Optional.of(v2Settings(text -> v2(1.0f), 0f))) {
-            @Override
-            long remainingChunks() {
-                throw new IllegalStateException("db down");
-            }
-        };
-
-        assertFalse(index.migrationComplete());
-        List<EmbeddingIndex.ScoredResult> results = assertDoesNotThrow(() -> index.findSimilar("q", 5));
-        assertEquals(1, results.size()); // falls back to the legacy table
-        cleanup(f);
-    }
-
-    @Test
-    void indexAllDoesNotReembedV2OnlyFileAndRemovesV2RowsForDeletedFiles() throws Exception {
-        Path kept = write("kept.txt", "http://kept.com", "doc kept");
-        Path gone = write("gone.txt", "http://gone.com", "doc gone");
-        AtomicInteger v2Calls = new AtomicInteger();
-        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
-                v2Settings(text -> { v2Calls.incrementAndGet(); return v2(1.0f); }, 0f));
-        index.indexFile(kept);
-        index.indexFile(gone);
-        Files.delete(gone);
-        v2Calls.set(0);
-
-        index.indexAll();
-
-        assertEquals(0, v2Calls.get());
-        assertEquals(1, v2Count(kept));
-        assertEquals(0, v2Count(gone));
-        cleanup(kept, gone);
-    }
-
-    @Test
-    void migrationStatusEmptyWithoutV2() {
-        assertTrue(new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).migrationStatus().isEmpty());
     }
 
     @Test
@@ -367,7 +180,7 @@ class EmbeddingIndexTest {
                     if (text.contains("relevant content")) return v(1.0f, 0.0f);
                     return v(1.0f, 0.0f); // query
                 },
-                dataDir.toString(), "nomic-embed-text", "", "", 0.5f, "");
+                dataDir.toString(), "bge-m3", "", "", 0.5f, "");
 
         index.indexFile(fileA);
         index.indexFile(fileB);
@@ -391,7 +204,7 @@ class EmbeddingIndexTest {
                     if (text.contains("Weak match")) return v(0.0f, 1.0f);
                     return v(1.0f, 0.0f); // query
                 },
-                dataDir.toString(), "nomic-embed-text", "", "", 0f, "");
+                dataDir.toString(), "bge-m3", "", "", 0f, "");
 
         index.indexFile(file);
         List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
@@ -477,7 +290,7 @@ class EmbeddingIndexTest {
                     captured[0] = text;
                     return v(1.0f);
                 },
-                dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f, "");
+                dataDir.toString(), "bge-m3", "search_document:", "search_query:", 0f, "");
 
         index.indexFile(file);
 
@@ -493,7 +306,7 @@ class EmbeddingIndexTest {
                     captured[0] = text;
                     return null;
                 },
-                dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f, "");
+                dataDir.toString(), "bge-m3", "search_document:", "search_query:", 0f, "");
 
         index.findSimilar("hello", 5);
 
@@ -501,49 +314,44 @@ class EmbeddingIndexTest {
     }
 
     @Test
-    void searchedWithinTracksLastSearch() throws Exception {
-        EmbeddingIndex index = new EmbeddingIndex(text -> null, dataDir.toString());
-        assertFalse(index.searchedWithin(java.time.Duration.ofHours(1)));
-        index.findSimilar("query", 5);
-        assertTrue(index.searchedWithin(java.time.Duration.ofHours(1)));
-        Thread.sleep(30);
-        assertFalse(index.searchedWithin(java.time.Duration.ofMillis(5)));
-        assertFalse(index.searchedWithin(java.time.Duration.ZERO));
-    }
-
-    @Test
-    void indexFileWithV2SkipsBlankChunksKeepingOriginalIndexes() throws Exception {
-        Path f = write("v2blank.txt", "http://v2blank.com", " ".repeat(Chunker.TARGET_CHUNK_CHARS) + "hello");
-        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
-                v2Settings(text -> v2(1.0f), 0f));
+    void indexFileSkipsBlankChunksKeepingOriginalIndexes() throws Exception {
+        Path f = write("blank.txt", "http://blank.com", " ".repeat(Chunker.TARGET_CHUNK_CHARS) + "hello");
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString());
         index.indexFile(f);
 
-        assertEquals(1, v2Count(f));
-        assertEquals(1, count("MCP_EMBEDDING_V2", " AND CHUNK_INDEX = 1", f));
+        assertEquals(1, count("", f));
+        assertEquals(1, count(" AND CHUNK_INDEX = 1", f));
         cleanup(f);
     }
 
     @Test
-    void indexFileWithV2AllBlankWritesNothingAndDoesNotThrow() throws Exception {
-        Path f = write("v2allblank.txt", "http://v2allblank.com", "\n");
+    void indexFileAllBlankWritesNothingAndDoesNotThrow() throws Exception {
+        Path f = write("allblank.txt", "http://allblank.com", "\n");
         AtomicInteger calls = new AtomicInteger();
-        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
-                v2Settings(text -> { calls.incrementAndGet(); return v2(1.0f); }, 0f));
+        EmbeddingIndex index = new EmbeddingIndex(text -> { calls.incrementAndGet(); return v(1.0f); }, dataDir.toString());
         index.indexFile(f);
 
-        assertEquals(0, v2Count(f));
+        assertEquals(0, count("", f));
         assertEquals(0, calls.get());
         cleanup(f);
     }
 
     @Test
-    void indexFileWithV2NullEmbeddingForNonBlankChunkStillAbortsFile() throws Exception {
-        Path f = write("v2nullreal.txt", "http://v2nullreal.com", " ".repeat(Chunker.TARGET_CHUNK_CHARS) + "hello");
-        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(),
-                v2Settings(text -> null, 0f));
+    void indexFileNullEmbeddingForNonBlankChunkStillAbortsFile() throws Exception {
+        Path f = write("nullreal.txt", "http://nullreal.com", " ".repeat(Chunker.TARGET_CHUNK_CHARS) + "hello");
+        EmbeddingIndex index = new EmbeddingIndex(text -> null, dataDir.toString());
         index.indexFile(f);
 
-        assertEquals(0, v2Count(f));
+        assertEquals(0, count("", f));
+        cleanup(f);
+    }
+
+    @Test
+    void indexFileStoresConfiguredModelName() throws Exception {
+        Path f = write("model.txt", "http://model.com", "hello");
+        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(f);
+
+        assertEquals(1, count(" AND MODEL = 'bge-m3'", f));
         cleanup(f);
     }
 }

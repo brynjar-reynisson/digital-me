@@ -29,12 +29,12 @@ public class SqliteToPostgresMigrator implements CommandLineRunner {
 
     private static final Logger log = LoggerFactory.getLogger(SqliteToPostgresMigrator.class);
 
-    // MCP_EMBEDDING.EMBEDDING is extensions.VECTOR(768) NOT NULL, and pgvector enforces that
+    // MCP_EMBEDDING.EMBEDDING is extensions.VECTOR(1024) NOT NULL, and pgvector enforces that
     // exact dimension on insert. Legacy SQLite embeddings all came from nomic-embed-text and are
-    // already 768-dim in practice, so this is a no-op for real data — it exists purely as a
+    // already full-width in practice, so this is a no-op for real data — it exists purely as a
     // defensive backstop against any short/legacy vector that would otherwise make the whole
     // migration abort partway through on a single bad row.
-    private static final int EMBEDDING_DIMENSIONS = 768;
+    private static final int EMBEDDING_DIMENSIONS = 1024;
 
     private final String sqlitePath;
 
@@ -144,7 +144,7 @@ public class SqliteToPostgresMigrator implements CommandLineRunner {
 
     /**
      * Zero-pads (or, in principle, truncates) a legacy embedding to exactly EMBEDDING_DIMENSIONS
-     * so it satisfies Postgres's fixed-width extensions.VECTOR(768) column. A no-op for the
+     * so it satisfies Postgres's fixed-width extensions.VECTOR(1024) column. A no-op for the
      * already-768-dim vectors every real nomic-embed-text embedding produces.
      */
     private static float[] padToDimensions(float[] vector) {

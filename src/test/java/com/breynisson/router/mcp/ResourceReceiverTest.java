@@ -35,12 +35,12 @@ class ResourceReceiverTest {
     }
 
     /**
-     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(768) NOT NULL (digital-me-db-1.sql) and
-     * pgvector enforces that exact dimension on insert. The test vector below is zero-padded to 768
+     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(1024) NOT NULL (digital-me-db-1.sql) and
+     * pgvector enforces that exact dimension on insert. The test vector below is zero-padded to 1024
      * dims so inserts succeed; zero-padding doesn't change what any test in this file asserts, since
      * these embeddings are never used in a similarity comparison here.
      */
-    private static final int DIMENSIONS = 768;
+    private static final int DIMENSIONS = 1024;
 
     private static float[] embeddingBytes() {
         float[] padded = new float[DIMENSIONS];
@@ -76,20 +76,6 @@ class ResourceReceiverTest {
         assertTrue(McpEmbeddingDao.findFilePathsBySourceUrl(sourceUrl).isEmpty(),
                 "Stale embedding rows should be deleted");
         assertNull(SummaryCacheDao.find(sourceUrl), "Cached summary should be deleted");
-    }
-
-    @Test
-    void deleteExistingForRemovesV2OnlyFileAndRows() throws IOException {
-        ResourceReceiver receiver = new ResourceReceiver(dataDir.toString());
-        String sourceUrl = "http://v2-only-source.com";
-        Path staleFile = receiver.addContent(AddContentRequests.of(sourceUrl, "Old", "old content"));
-        McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, new McpEmbedding(staleFile.toAbsolutePath().toString(), 0,
-                sourceUrl, "old content", new float[1024], "bge-m3", "2026-01-01T00:00:00Z"));
-
-        receiver.deleteExistingFor(sourceUrl);
-
-        assertFalse(Files.exists(staleFile), "V2-only resource file should be deleted");
-        assertTrue(McpEmbeddingDao.findFilePathsBySourceUrl(sourceUrl).isEmpty(), "V2 rows should be deleted");
     }
 
     @Test

@@ -25,14 +25,14 @@ class SqliteToPostgresMigratorTest {
     static String schema;
 
     /**
-     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(768) NOT NULL, and pgvector enforces
+     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(1024) NOT NULL, and pgvector enforces
      * that exact dimension on both insert and the <=> comparison operator used by findSimilar().
      * The fixture below deliberately seeds a 2-dimensional SQLite embedding to keep the test
-     * simple; the query vector here is zero-padded to 768 dims to match what the migrator will
+     * simple; the query vector here is zero-padded to 1024 dims to match what the migrator will
      * have stored, the same way McpEmbeddingDaoTest pads its own test vectors. Zero-padding both
      * sides of a cosine comparison leaves the score unchanged.
      */
-    private static final int DIMENSIONS = 768;
+    private static final int DIMENSIONS = 1024;
 
     private static float[] pad(float[] values) {
         float[] padded = new float[DIMENSIONS];

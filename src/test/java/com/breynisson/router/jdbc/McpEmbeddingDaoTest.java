@@ -28,15 +28,15 @@ class McpEmbeddingDaoTest {
     }
 
     /**
-     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(768) NOT NULL (digital-me-db-1.sql) and
+     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(1024) NOT NULL (digital-me-db-1.sql) and
      * pgvector enforces that exact dimension on insert (confirmed live: inserting a 2- or 3-element
-     * vector fails with "ERROR: expected 768 dimensions, not 2"), unlike the old SQLite BLOB column
-     * which accepted any length. Every test vector is zero-padded to 768 dims so inserts succeed;
+     * vector fails with "ERROR: expected 1024 dimensions, not 2"), unlike the old SQLite BLOB column
+     * which accepted any length. Every test vector is zero-padded to 1024 dims so inserts succeed;
      * zero-padding both sides of a cosine comparison leaves the dot product and magnitude (and so
      * the cosine score) identical to the unpadded vectors, so this doesn't change what any test
      * asserts.
      */
-    private static final int DIMENSIONS = 768;
+    private static final int DIMENSIONS = 1024;
 
     private static float[] pad(float[] values) {
         float[] padded = new float[DIMENSIONS];
@@ -70,7 +70,7 @@ class McpEmbeddingDaoTest {
     @Test
     void upsertAndFindAll() {
         String path = "/tmp/dao-test-1.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/1", "chunk text", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/1", "chunk text", "bge-m3"));
 
         List<McpEmbedding> all = findByFilePath(path);
         assertTrue(all.stream().anyMatch(e -> e.filePath.equals(path) && e.sourceUrl.equals("http://example.com/1")));
@@ -80,8 +80,8 @@ class McpEmbeddingDaoTest {
     @Test
     void findAllFilePathsReturnsDistinctPathAcrossChunks() {
         String path = "/tmp/dao-test-2.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/2", "chunk 0", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(path, 1, "http://example.com/2", "chunk 1", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/2", "chunk 0", "bge-m3"));
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://example.com/2", "chunk 1", "bge-m3"));
 
         Set<String> paths = McpEmbeddingDao.findAllFilePaths();
         assertTrue(paths.contains(path));
@@ -92,8 +92,8 @@ class McpEmbeddingDaoTest {
     @Test
     void upsertReplacesSameChunkIndex() {
         String path = "/tmp/dao-test-3.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://old.com", "old text", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://new.com", "new text", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://old.com", "old text", "bge-m3"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://new.com", "new text", "bge-m3"));
 
         List<McpEmbedding> matching = findByFilePath(path);
         assertEquals(1, matching.size());
@@ -104,8 +104,8 @@ class McpEmbeddingDaoTest {
     @Test
     void differentChunkIndexesForSameFileAreSeparateRows() {
         String path = "/tmp/dao-test-5.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/5", "chunk 0", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(path, 1, "http://example.com/5", "chunk 1", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/5", "chunk 0", "bge-m3"));
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://example.com/5", "chunk 1", "bge-m3"));
 
         List<McpEmbedding> matching = findByFilePath(path);
         assertEquals(2, matching.size());
@@ -117,7 +117,7 @@ class McpEmbeddingDaoTest {
         String path = "/tmp/dao-test-4.txt";
         float[] original = {0.1f, 0.5f, -0.3f};
         McpEmbeddingDao.upsert(new McpEmbedding(path, 0, "http://example.com/4", "chunk text",
-                embeddingBytes(original), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+                embeddingBytes(original), "bge-m3", "2026-01-01T00:00:00Z"));
 
         McpEmbedding stored = findByFilePath(path).stream().findFirst().orElseThrow();
         assertArrayEquals(pad(original), stored.embedding, 0.0001f);
@@ -127,8 +127,8 @@ class McpEmbeddingDaoTest {
     @Test
     void deleteByFilePathRemovesAllChunksForFile() {
         String path = "/tmp/dao-test-6.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/6", "chunk 0", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(path, 1, "http://example.com/6", "chunk 1", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(path, 0, "http://example.com/6", "chunk 0", "bge-m3"));
+        McpEmbeddingDao.upsert(embedding(path, 1, "http://example.com/6", "chunk 1", "bge-m3"));
 
         McpEmbeddingDao.deleteByFilePath(path);
 
@@ -140,10 +140,10 @@ class McpEmbeddingDaoTest {
         String pathA = "/tmp/dao-test-8-a.txt";
         String pathB = "/tmp/dao-test-8-b.txt";
         String otherPath = "/tmp/dao-test-8-other.txt";
-        McpEmbeddingDao.upsert(embedding(pathA, 0, "http://shared-source.com", "chunk 0", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(pathA, 1, "http://shared-source.com", "chunk 1", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(pathB, 0, "http://shared-source.com", "chunk 0", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(otherPath, 0, "http://other-source.com", "chunk 0", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(pathA, 0, "http://shared-source.com", "chunk 0", "bge-m3"));
+        McpEmbeddingDao.upsert(embedding(pathA, 1, "http://shared-source.com", "chunk 1", "bge-m3"));
+        McpEmbeddingDao.upsert(embedding(pathB, 0, "http://shared-source.com", "chunk 0", "bge-m3"));
+        McpEmbeddingDao.upsert(embedding(otherPath, 0, "http://other-source.com", "chunk 0", "bge-m3"));
 
         Set<String> paths = McpEmbeddingDao.findFilePathsBySourceUrl("http://shared-source.com");
 
@@ -151,19 +151,6 @@ class McpEmbeddingDaoTest {
         cleanup(pathA);
         cleanup(pathB);
         cleanup(otherPath);
-    }
-
-    @Test
-    void findFilePathsBySourceUrlIncludesV2OnlyAndDeduplicatesUnion() {
-        String v2Only = "/tmp/dao-union-v2only.txt";
-        String both = "/tmp/dao-union-both.txt";
-        McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, embedding1024(v2Only, 0, "http://union.com", "a"));
-        McpEmbeddingDao.upsert(embedding(both, 0, "http://union.com", "b", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, embedding1024(both, 0, "http://union.com", "b"));
-
-        assertEquals(Set.of(v2Only, both), McpEmbeddingDao.findFilePathsBySourceUrl("http://union.com"));
-        cleanupBoth(v2Only);
-        cleanupBoth(both);
     }
 
     @Test
@@ -176,9 +163,9 @@ class McpEmbeddingDaoTest {
         String pathA = "/tmp/dao-test-9-a.txt";
         String pathB = "/tmp/dao-test-9-b.txt";
         String otherPath = "/tmp/dao-test-9-other.txt";
-        McpEmbeddingDao.upsert(embedding(pathA, 0, "http://shared-source-2.com", "chunk 0", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(pathB, 0, "http://shared-source-2.com", "chunk 0", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(otherPath, 0, "http://other-source-2.com", "chunk 0", "nomic-embed-text"));
+        McpEmbeddingDao.upsert(embedding(pathA, 0, "http://shared-source-2.com", "chunk 0", "bge-m3"));
+        McpEmbeddingDao.upsert(embedding(pathB, 0, "http://shared-source-2.com", "chunk 0", "bge-m3"));
+        McpEmbeddingDao.upsert(embedding(otherPath, 0, "http://other-source-2.com", "chunk 0", "bge-m3"));
 
         McpEmbeddingDao.deleteBySourceUrl("http://shared-source-2.com");
 
@@ -207,9 +194,9 @@ class McpEmbeddingDaoTest {
     void findSimilarDedupsToBestScoringChunkPerSource() {
         String path = "/tmp/dao-test-similar-1.txt";
         McpEmbeddingDao.upsert(new McpEmbedding(path, 0, "http://similar.com", "weak chunk",
-                pad(new float[]{0.0f, 1.0f}), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+                pad(new float[]{0.0f, 1.0f}), "bge-m3", "2026-01-01T00:00:00Z"));
         McpEmbeddingDao.upsert(new McpEmbedding(path, 1, "http://similar.com", "strong chunk",
-                pad(new float[]{1.0f, 0.0f}), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+                pad(new float[]{1.0f, 0.0f}), "bge-m3", "2026-01-01T00:00:00Z"));
 
         List<McpEmbeddingDao.ScoredMatch> results = McpEmbeddingDao.findSimilar(pad(new float[]{1.0f, 0.0f}), 0f, 10);
 
@@ -223,7 +210,7 @@ class McpEmbeddingDaoTest {
     void findSimilarAppliesMinScoreThreshold() {
         String path = "/tmp/dao-test-similar-2.txt";
         McpEmbeddingDao.upsert(new McpEmbedding(path, 0, "http://orthogonal.com", "orthogonal chunk",
-                pad(new float[]{0.0f, 1.0f}), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+                pad(new float[]{0.0f, 1.0f}), "bge-m3", "2026-01-01T00:00:00Z"));
 
         List<McpEmbeddingDao.ScoredMatch> results = McpEmbeddingDao.findSimilar(pad(new float[]{1.0f, 0.0f}), 0.5f, 10);
 
@@ -231,45 +218,20 @@ class McpEmbeddingDaoTest {
         cleanup(path);
     }
 
-    private static float[] pad1024(float[] values) {
-        float[] padded = new float[1024];
-        System.arraycopy(values, 0, padded, 0, values.length);
-        return padded;
-    }
-
-    private static McpEmbedding embedding1024(String path, int chunkIndex, String sourceUrl, String text) {
-        return new McpEmbedding(path, chunkIndex, sourceUrl, text, pad1024(new float[]{1.0f, 0.0f}), "bge-m3", "2026-01-01T00:00:00Z");
-    }
-
-    private static void cleanupBoth(String filePath) {
-        DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING WHERE FILE_PATH='" + filePath + "'");
-        DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING_V2 WHERE FILE_PATH='" + filePath + "'");
-    }
-
-    private static int countRows(String table, String filePath) {
-        Integer n = DatabaseAdapter.selectOne("SELECT COUNT(*) FROM " + table + " WHERE FILE_PATH = ?",
+    private static int countRows(String filePath) {
+        Integer n = DatabaseAdapter.selectOne("SELECT COUNT(*) FROM MCP_EMBEDDING WHERE FILE_PATH = ?",
                 DatabaseAdapter.RESULT_SET_INT_TRANSFORM, filePath);
         return n == null ? 0 : n;
     }
 
-    private static void insertV2Row(java.sql.Connection c, String path) throws SQLException {
+    private static void insertRow(java.sql.Connection c, String path) throws SQLException {
         try (java.sql.PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO MCP_EMBEDDING_V2 (FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING, MODEL, INDEXED_AT) "
+                "INSERT INTO MCP_EMBEDDING (FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING, MODEL, INDEXED_AT) "
               + "VALUES (?, 0, 's', 't', ?, 'm', 'x')")) {
             ps.setString(1, path);
-            ps.setObject(2, new PGvector(pad1024(new float[]{1f})));
+            ps.setObject(2, new PGvector(pad(new float[]{1f})));
             ps.executeUpdate();
         }
-    }
-
-    @Test
-    void migrationSchemaExists() {
-        String path = "/tmp/dao-test-schema.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://schema.com", "c", "nomic-embed-text"));
-        DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = '2026-01-01T00:00:00Z' WHERE FILE_PATH='" + path + "'");
-        McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, embedding1024(path, 0, "http://schema.com", "c"));
-        assertEquals(1, countRows("MCP_EMBEDDING_V2", path));
-        cleanupBoth(path);
     }
 
     @Test
@@ -277,199 +239,30 @@ class McpEmbeddingDaoTest {
         String rolledBack = "/tmp/dao-test-tx-rollback.txt";
         String committed = "/tmp/dao-test-tx-commit.txt";
         assertThrows(RouterException.class, () -> DatabaseAdapter.inTransaction(c -> {
-            insertV2Row(c, rolledBack);
+            insertRow(c, rolledBack);
             throw new IllegalStateException("boom");
         }));
-        assertEquals(0, countRows("MCP_EMBEDDING_V2", rolledBack));
+        assertEquals(0, countRows(rolledBack));
 
         String result = DatabaseAdapter.inTransaction(c -> {
-            insertV2Row(c, committed);
+            insertRow(c, committed);
             return "ok";
         });
         assertEquals("ok", result);
-        assertEquals(1, countRows("MCP_EMBEDDING_V2", committed));
-        cleanupBoth(committed);
+        assertEquals(1, countRows(committed));
+        cleanup(committed);
     }
 
     @Test
-    void upsertV2ThenFindSimilarV2ReturnsMatch() {
-        String path = "/tmp/dao-test-v2-similar.txt";
-        McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, embedding1024(path, 0, "http://v2-similar.com", "v2 chunk"));
-        List<McpEmbeddingDao.ScoredMatch> results = McpEmbeddingDao.findSimilar(
-                McpEmbeddingDao.TABLE_V2, pad1024(new float[]{1.0f, 0.0f}), 0f, 10, false);
-        assertTrue(results.stream().anyMatch(r -> r.sourceUrl().equals("http://v2-similar.com")));
-        cleanupBoth(path);
-    }
-
-    @Test
-    void findSimilarUnmigratedOnlySkipsMarkedRows() {
-        String marked = "/tmp/dao-test-unmig-marked.txt";
-        String open = "/tmp/dao-test-unmig-open.txt";
-        McpEmbeddingDao.upsert(embedding(marked, 0, "http://unmig-marked.com", "c", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(open, 0, "http://unmig-open.com", "c", "nomic-embed-text"));
-        DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = '2026-01-01T00:00:00Z' WHERE FILE_PATH='" + marked + "'");
-        float[] q = embeddingBytes(1.0f, 2.0f);
-
-        List<McpEmbeddingDao.ScoredMatch> only = McpEmbeddingDao.findSimilar(McpEmbeddingDao.TABLE, q, 0f, 1000, true);
-        assertTrue(only.stream().anyMatch(r -> r.sourceUrl().equals("http://unmig-open.com")));
-        assertTrue(only.stream().noneMatch(r -> r.sourceUrl().equals("http://unmig-marked.com")));
-
-        List<McpEmbeddingDao.ScoredMatch> all = McpEmbeddingDao.findSimilar(McpEmbeddingDao.TABLE, q, 0f, 1000, false);
-        assertTrue(all.stream().anyMatch(r -> r.sourceUrl().equals("http://unmig-open.com")));
-        assertTrue(all.stream().anyMatch(r -> r.sourceUrl().equals("http://unmig-marked.com")));
-        cleanupBoth(marked);
-        cleanupBoth(open);
-    }
-
-    @Test
-    void deleteByFilePathAndSourceUrlRemoveV2Rows() {
-        String path = "/tmp/dao-test-del-both-a.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://del-both-a.com", "c", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, embedding1024(path, 0, "http://del-both-a.com", "c"));
-        McpEmbeddingDao.deleteByFilePath(path);
-        assertEquals(0, countRows("MCP_EMBEDDING", path));
-        assertEquals(0, countRows("MCP_EMBEDDING_V2", path));
-
-        String path2 = "/tmp/dao-test-del-both-b.txt";
-        McpEmbeddingDao.upsert(embedding(path2, 0, "http://del-both-b.com", "c", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(McpEmbeddingDao.TABLE_V2, embedding1024(path2, 0, "http://del-both-b.com", "c"));
-        McpEmbeddingDao.deleteBySourceUrl("http://del-both-b.com");
-        assertEquals(0, countRows("MCP_EMBEDDING", path2));
-        assertEquals(0, countRows("MCP_EMBEDDING_V2", path2));
-    }
-
-    @Test
-    void reUpsertOfMigratedRowResetsMarker() {
-        String path = "/tmp/dao-test-reset-marker.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://reset.com", "c", "nomic-embed-text"));
-        DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = '2026-01-01T00:00:00Z' WHERE FILE_PATH='" + path + "'");
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://reset.com", "c2", "nomic-embed-text"));
-        Integer nulls = DatabaseAdapter.selectOne(
-                "SELECT COUNT(*) FROM MCP_EMBEDDING WHERE FILE_PATH = ? AND MIGRATED_AT IS NULL",
-                DatabaseAdapter.RESULT_SET_INT_TRANSFORM, path);
-        assertEquals(1, nulls);
-        cleanup(path);
-    }
-
-    private static void clearAll() {
+    void countsReflectStoredRows() {
         DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING");
-        DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING_V2");
-    }
+        McpEmbeddingDao.upsert(embedding("/tmp/dao-count-a.txt", 0, "http://count.com/a", "c0", "bge-m3"));
+        McpEmbeddingDao.upsert(embedding("/tmp/dao-count-a.txt", 1, "http://count.com/a", "c1", "bge-m3"));
+        McpEmbeddingDao.upsert(embedding("/tmp/dao-count-b.txt", 0, "http://count.com/b", "c0", "bge-m3"));
 
-    private static int unmigratedMarkerCount(String filePath) {
-        Integer n = DatabaseAdapter.selectOne(
-                "SELECT COUNT(*) FROM MCP_EMBEDDING WHERE FILE_PATH = ? AND MIGRATED_AT IS NULL",
-                DatabaseAdapter.RESULT_SET_INT_TRANSFORM, filePath);
-        return n == null ? 0 : n;
-    }
-
-    @Test
-    void findNextUnmigratedOrdersLocalThenIcelandicThenOthers() {
-        clearAll();
-        McpEmbeddingDao.upsert(embedding("/tmp/mig-order-cnn.txt", 0, "https://www.cnn.com/y", "c", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding("/tmp/mig-order-visir.txt", 0, "https://www.visir.is/x", "c", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding("/tmp/mig-order-diary.txt", 0, "D:\\diary\\a.txt", "c", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding("/tmp/mig-order-done.txt", 0, "D:\\diary\\done.txt", "c", "nomic-embed-text"));
-        DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = '2026-01-01T00:00:00Z' "
-                + "WHERE FILE_PATH='/tmp/mig-order-done.txt'");
-
-        assertEquals(List.of("/tmp/mig-order-diary.txt", "/tmp/mig-order-visir.txt", "/tmp/mig-order-cnn.txt"),
-                McpEmbeddingDao.findNextUnmigratedFilePaths(10));
-        assertEquals(List.of("/tmp/mig-order-diary.txt", "/tmp/mig-order-visir.txt"),
-                McpEmbeddingDao.findNextUnmigratedFilePaths(2));
-        clearAll();
-    }
-
-    @Test
-    void findUnmigratedChunksReturnsChunksOrderedByIndex() {
-        String path = "/tmp/mig-chunks.txt";
-        McpEmbeddingDao.upsert(embedding(path, 1, "http://chunks.com", "second", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://chunks.com", "first", "nomic-embed-text"));
-
-        List<McpEmbeddingDao.ChunkToMigrate> chunks = McpEmbeddingDao.findUnmigratedChunks(path);
-
-        assertEquals(List.of(new McpEmbeddingDao.ChunkToMigrate(0, "http://chunks.com", "first"),
-                new McpEmbeddingDao.ChunkToMigrate(1, "http://chunks.com", "second")), chunks);
-        cleanupBoth(path);
-    }
-
-    @Test
-    void commitMigrationWritesV2RowsAndMarksOldRows() {
-        String path = "/tmp/mig-commit.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://commit.com", "a", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(path, 1, "http://commit.com", "b", "nomic-embed-text"));
-
-        boolean ok = McpEmbeddingDao.commitMigration(path, List.of(
-                embedding1024(path, 0, "http://commit.com", "a"),
-                embedding1024(path, 1, "http://commit.com", "b")), "2026-02-02T00:00:00Z");
-
-        assertTrue(ok);
-        assertEquals(0, unmigratedMarkerCount(path));
-        assertEquals(2, countRows("MCP_EMBEDDING_V2", path));
-        cleanupBoth(path);
-    }
-
-    @Test
-    void commitMigrationRollsBackWhenOldRowsChangedConcurrently() {
-        String path = "/tmp/mig-rollback.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://rollback.com", "a", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(path, 1, "http://rollback.com", "b", "nomic-embed-text"));
-        DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING WHERE FILE_PATH='" + path + "' AND CHUNK_INDEX=1");
-
-        boolean ok = McpEmbeddingDao.commitMigration(path, List.of(
-                embedding1024(path, 0, "http://rollback.com", "a"),
-                embedding1024(path, 1, "http://rollback.com", "b")), "2026-02-02T00:00:00Z");
-
-        assertFalse(ok);
-        assertEquals(0, countRows("MCP_EMBEDDING_V2", path));
-        assertEquals(1, unmigratedMarkerCount(path));
-        cleanupBoth(path);
-    }
-
-    @Test
-    void commitMigrationRollsBackWhenChunkTextChangedConcurrently() {
-        String path = "/tmp/mig-textchange.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://textchange.com", "a", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(path, 1, "http://textchange.com", "b", "nomic-embed-text"));
-        List<McpEmbedding> v2 = List.of(
-                embedding1024(path, 0, "http://textchange.com", "a"),
-                embedding1024(path, 1, "http://textchange.com", "b"));
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://textchange.com", "a-new", "nomic-embed-text"));
-
-        assertFalse(McpEmbeddingDao.commitMigration(path, v2, "2026-02-02T00:00:00Z"));
-
-        assertEquals(0, countRows("MCP_EMBEDDING_V2", path));
-        assertEquals(2, unmigratedMarkerCount(path));
-        cleanupBoth(path);
-    }
-
-    @Test
-    void commitMigrationIsNoopForAlreadyMigratedFile() {
-        String path = "/tmp/mig-noop.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://noop.com", "a", "nomic-embed-text"));
-        List<McpEmbedding> v2 = List.of(embedding1024(path, 0, "http://noop.com", "a"));
-
-        assertTrue(McpEmbeddingDao.commitMigration(path, v2, "2026-02-02T00:00:00Z"));
-        assertFalse(McpEmbeddingDao.commitMigration(path, v2, "2026-02-03T00:00:00Z"));
-
-        assertEquals(1, countRows("MCP_EMBEDDING_V2", path));
-        cleanupBoth(path);
-    }
-
-    @Test
-    void migrationStatusCountsFilesAndChunks() {
-        clearAll();
-        String done = "/tmp/mig-status-done.txt";
-        String open = "/tmp/mig-status-open.txt";
-        McpEmbeddingDao.upsert(embedding(done, 0, "http://status-done.com", "a", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(done, 1, "http://status-done.com", "b", "nomic-embed-text"));
-        for (int i = 0; i < 3; i++) {
-            McpEmbeddingDao.upsert(embedding(open, i, "http://status-open.com", "c" + i, "nomic-embed-text"));
-        }
-        DatabaseAdapter.runSql("UPDATE MCP_EMBEDDING SET MIGRATED_AT = '2026-01-01T00:00:00Z' WHERE FILE_PATH='" + done + "'");
-
-        assertEquals(new McpEmbeddingDao.MigrationStatus(1, 1, 2, 3), McpEmbeddingDao.migrationStatus());
-        clearAll();
+        assertEquals(2, McpEmbeddingDao.countIndexedFiles());
+        assertEquals(3, McpEmbeddingDao.countTotalChunks());
+        DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING");
     }
 
     @Test
@@ -477,64 +270,14 @@ class McpEmbeddingDaoTest {
         String pathA = "/tmp/dao-test-similar-3-a.txt";
         String pathB = "/tmp/dao-test-similar-3-b.txt";
         McpEmbeddingDao.upsert(new McpEmbedding(pathA, 0, "http://topk-a.com", "chunk a",
-                pad(new float[]{1.0f, 0.0f}), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+                pad(new float[]{1.0f, 0.0f}), "bge-m3", "2026-01-01T00:00:00Z"));
         McpEmbeddingDao.upsert(new McpEmbedding(pathB, 0, "http://topk-b.com", "chunk b",
-                pad(new float[]{1.0f, 0.0f}), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+                pad(new float[]{1.0f, 0.0f}), "bge-m3", "2026-01-01T00:00:00Z"));
 
         List<McpEmbeddingDao.ScoredMatch> results = McpEmbeddingDao.findSimilar(pad(new float[]{1.0f, 0.0f}), 0f, 1);
 
         assertEquals(1, results.size());
         cleanup(pathA);
         cleanup(pathB);
-    }
-
-    @Test
-    void commitMigrationWithBlankChunksMarksThemWithoutV2Row() {
-        String path = "/tmp/mig-blank.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://blank.com", "\n", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(path, 1, "http://blank.com", "b", "nomic-embed-text"));
-
-        boolean ok = McpEmbeddingDao.commitMigration(path,
-                List.of(embedding1024(path, 1, "http://blank.com", "b")),
-                List.of(new McpEmbeddingDao.ChunkToMigrate(0, "http://blank.com", "\n")),
-                "2026-02-02T00:00:00Z");
-
-        assertTrue(ok);
-        assertEquals(0, unmigratedMarkerCount(path));
-        assertEquals(1, countRows("MCP_EMBEDDING_V2", path));
-        cleanupBoth(path);
-    }
-
-    @Test
-    void commitMigrationRollsBackWhenBlankChunkTextChangedConcurrently() {
-        String path = "/tmp/mig-blank-change.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://blankchange.com", "\n", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(path, 1, "http://blankchange.com", "b", "nomic-embed-text"));
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://blankchange.com", "now real", "nomic-embed-text"));
-
-        boolean ok = McpEmbeddingDao.commitMigration(path,
-                List.of(embedding1024(path, 1, "http://blankchange.com", "b")),
-                List.of(new McpEmbeddingDao.ChunkToMigrate(0, "http://blankchange.com", "\n")),
-                "2026-02-02T00:00:00Z");
-
-        assertFalse(ok);
-        assertEquals(0, countRows("MCP_EMBEDDING_V2", path));
-        assertEquals(2, unmigratedMarkerCount(path));
-        cleanupBoth(path);
-    }
-
-    @Test
-    void commitMigrationAllBlankFileCommitsWithZeroV2Rows() {
-        String path = "/tmp/mig-allblank.txt";
-        McpEmbeddingDao.upsert(embedding(path, 0, "http://allblank.com", "\n", "nomic-embed-text"));
-
-        boolean ok = McpEmbeddingDao.commitMigration(path, List.of(),
-                List.of(new McpEmbeddingDao.ChunkToMigrate(0, "http://allblank.com", "\n")),
-                "2026-02-02T00:00:00Z");
-
-        assertTrue(ok);
-        assertEquals(0, unmigratedMarkerCount(path));
-        assertEquals(0, countRows("MCP_EMBEDDING_V2", path));
-        cleanupBoth(path);
     }
 }

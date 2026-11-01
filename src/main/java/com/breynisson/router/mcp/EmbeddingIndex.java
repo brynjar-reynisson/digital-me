@@ -18,7 +18,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -31,13 +30,8 @@ import java.util.stream.Stream;
 @Component
 public class EmbeddingIndex {
 
-    /** Epoch millis of the last interactive search; 0 = never. */
-    private volatile long lastSearchMillis;
-
-
     private static final Logger log = LoggerFactory.getLogger(EmbeddingIndex.class);
-    private static final String DEFAULT_MODEL = "nomic-embed-text";
-    private static final long INCOMPLETE_TTL_MILLIS = 30_000;
+    private static final String DEFAULT_MODEL = "bge-m3";
 
     private final EmbeddingClient embeddingClient;
     private final Path mcpResourcesDir;
@@ -46,24 +40,16 @@ public class EmbeddingIndex {
     private final String queryPrefix;
     private final float minScore;
     private final boolean migrating;
-    private final V2Settings v2;
-
-    /** How long a "migration not complete" answer is cached; package-visible so tests need not sleep 30 s. */
-    volatile long incompleteTtlMillis = INCOMPLETE_TTL_MILLIS;
-    private volatile boolean migrationCompleteCached;
-    private volatile long incompleteCheckedAtMillis;
 
     @Autowired
     public EmbeddingIndex(
             EmbeddingClient embeddingClient,
             @Value("${data.dir:.}") String dataDir,
             @Value("${ollama.embedding.model:" + DEFAULT_MODEL + "}") String model,
-            @Value("${ollama.embedding.document-prefix:search_document:}") String documentPrefix,
-            @Value("${ollama.embedding.query-prefix:search_query:}") String queryPrefix,
-            @Value("${semantic-search.min-score:0.5}") float minScore,
-            @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath,
-            Optional<V2Settings> v2) {
-        this.v2 = v2.orElse(null);
+            @Value("${ollama.embedding.document-prefix:}") String documentPrefix,
+            @Value("${ollama.embedding.query-prefix:}") String queryPrefix,
+            @Value("${semantic-search.min-score:0.35}") float minScore,
+            @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath) {
         this.embeddingClient = embeddingClient;
         this.mcpResourcesDir = Paths.get(dataDir, ResourceReceiver.MCP_RESOURCES_DIR);
         this.model = model;
@@ -73,55 +59,9 @@ public class EmbeddingIndex {
         this.migrating = !migrateSqlitePath.isBlank();
     }
 
-    /** Constructor without a second-generation model. */
-    public EmbeddingIndex(
-            EmbeddingClient embeddingClient, String dataDir, String model, String documentPrefix,
-            String queryPrefix, float minScore, String migrateSqlitePath) {
-        this(embeddingClient, dataDir, model, documentPrefix, queryPrefix, minScore, migrateSqlitePath,
-                Optional.empty());
-    }
-
     /** Convenience constructor for tests: default model, no task prefixes, no score threshold. */
     public EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir) {
         this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f, "");
-    }
-
-    /** Convenience constructor for tests with a second-generation model configured. */
-    public EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir, V2Settings v2) {
-        this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f, "", Optional.ofNullable(v2));
-    }
-
-    /** Migration progress; present only when the second-generation model is configured. */
-    public Optional<McpEmbeddingDao.MigrationStatus> migrationStatus() {
-        return v2 == null ? Optional.empty() : Optional.of(McpEmbeddingDao.migrationStatus());
-    }
-
-    /**
-     * True once the second-generation model is configured and no legacy chunk remains unmigrated.
-     * A true answer is cached for the life of the instance; a false one for {@link #incompleteTtlMillis}.
-     */
-    boolean migrationComplete() {
-        if (v2 == null) return false;
-        if (migrationCompleteCached) return true;
-        long now = System.currentTimeMillis();
-        if (incompleteCheckedAtMillis != 0 && now - incompleteCheckedAtMillis < incompleteTtlMillis) return false;
-        boolean complete;
-        try {
-            complete = remainingChunks() == 0;
-        } catch (Exception e) {
-            // Treat a failed check as "not complete" (legacy search keeps working); the failure is
-            // cached like any other false for the TTL so a flapping DB is not hammered per search.
-            log.warn("Migration completeness check failed", e);
-            complete = false;
-        }
-        if (complete) migrationCompleteCached = true;
-        else incompleteCheckedAtMillis = now;
-        return complete;
-    }
-
-    /** Unmigrated legacy chunk count; package-visible so tests can simulate a DB failure. */
-    long remainingChunks() {
-        return McpEmbeddingDao.migrationStatus().remainingChunks();
     }
 
     /**
@@ -145,7 +85,6 @@ public class EmbeddingIndex {
             reconcileStaleFiles(diskPaths);
             McpEmbeddingDao.deleteByModelNot(model);
             Set<String> indexed = new HashSet<>(McpEmbeddingDao.findAllFilePaths());
-            if (v2 != null) indexed.addAll(McpEmbeddingDao.findAllFilePaths(McpEmbeddingDao.TABLE_V2));
             for (String path : diskPaths) {
                 if (!indexed.contains(path)) indexFile(Paths.get(path));
             }
@@ -175,7 +114,6 @@ public class EmbeddingIndex {
 
     private void reconcileStaleFiles(Set<String> diskPaths) {
         Set<String> dbPaths = new HashSet<>(McpEmbeddingDao.findAllFilePaths());
-        if (v2 != null) dbPaths.addAll(McpEmbeddingDao.findAllFilePaths(McpEmbeddingDao.TABLE_V2));
         for (String dbPath : dbPaths) {
             if (!diskPaths.contains(dbPath)) {
                 McpEmbeddingDao.deleteByFilePath(dbPath);
@@ -193,38 +131,25 @@ public class EmbeddingIndex {
             String filePath = file.toAbsolutePath().toString();
             String indexedAt = Instant.now().toString();
 
-            // With the second-generation model configured, new content is embedded by it alone and
-            // written only to MCP_EMBEDDING_V2 (one model resident in Ollama at a time).
-            EmbeddingClient client = v2 != null ? v2.client() : embeddingClient;
-            String prefix = v2 != null ? v2.documentPrefix() : documentPrefix;
-            String rowModel = v2 != null ? v2.model() : model;
-            String table = v2 != null ? McpEmbeddingDao.TABLE_V2 : McpEmbeddingDao.TABLE;
-
             List<com.breynisson.router.jdbc.model.McpEmbedding> rows = new ArrayList<>();
             List<String> chunks = Chunker.chunk(body);
             for (int i = 0; i < chunks.size(); i++) {
                 String chunkText = chunks.get(i);
-                // V2 only: a blank chunk has nothing to embed, skip it rather than abort the file
-                if (v2 != null && OllamaEmbeddingClient.isBlankAfterNormalisation(chunkText)) continue;
-                String toEmbed = prefix.isEmpty() ? chunkText : prefix + " " + chunkText;
-                float[] embedding = client.embed(toEmbed);
+                // A blank chunk has nothing to embed, skip it rather than abort the file
+                if (OllamaEmbeddingClient.isBlankAfterNormalisation(chunkText)) continue;
+                String toEmbed = documentPrefix.isEmpty() ? chunkText : documentPrefix + " " + chunkText;
+                float[] embedding = embeddingClient.embed(toEmbed);
                 if (embedding == null) return; // Ollama unavailable — retry the whole file next pass
                 rows.add(new com.breynisson.router.jdbc.model.McpEmbedding(
-                        filePath, i, sourceUrl, chunkText, normalize(embedding), rowModel, indexedAt));
+                        filePath, i, sourceUrl, chunkText, normalize(embedding), model, indexedAt));
             }
             for (com.breynisson.router.jdbc.model.McpEmbedding row : rows) {
-                McpEmbeddingDao.upsert(table, row);
+                McpEmbeddingDao.upsert(row);
             }
             log.debug("Indexed {} chunk(s) for {}", rows.size(), file.getFileName());
         } catch (Exception e) {
             log.warn("Error indexing embedding for {}", file, e);
         }
-    }
-
-    /** True if an interactive semantic search started less than {@code window} ago (false if none ever). */
-    public boolean searchedWithin(java.time.Duration window) {
-        long last = lastSearchMillis;
-        return last != 0 && System.currentTimeMillis() - last < window.toMillis();
     }
 
     /**
@@ -233,18 +158,11 @@ public class EmbeddingIndex {
      * Ollama is unavailable or no embeddings are stored.
      */
     public List<ScoredResult> findSimilar(String query, int topK) {
-        lastSearchMillis = System.currentTimeMillis();
-        // One model at a time: legacy (nomic) until the migration completes, then bge-m3 only.
-        boolean useV2 = migrationComplete();
-        String table = useV2 ? McpEmbeddingDao.TABLE_V2 : McpEmbeddingDao.TABLE;
-        EmbeddingClient client = useV2 ? v2.client() : embeddingClient;
-        String prefix = useV2 ? v2.queryPrefix() : queryPrefix;
-        float threshold = useV2 ? v2.minScore() : minScore;
-        String prefixedQuery = prefix.isEmpty() ? query : prefix + " " + query;
-        float[] raw = client.embed(prefixedQuery);
+        String prefixedQuery = queryPrefix.isEmpty() ? query : queryPrefix + " " + query;
+        float[] raw = embeddingClient.embed(prefixedQuery);
         if (raw == null) return List.of();
         try {
-            return McpEmbeddingDao.findSimilar(table, normalize(raw), threshold, topK, false)
+            return McpEmbeddingDao.findSimilar(normalize(raw), minScore, topK)
                     .stream().map(EmbeddingIndex::toResult).toList();
         } catch (Exception e) {
             log.warn("Embedding search failed", e);
