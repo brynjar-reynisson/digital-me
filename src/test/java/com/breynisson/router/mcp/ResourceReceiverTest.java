@@ -35,12 +35,12 @@ class ResourceReceiverTest {
     }
 
     /**
-     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(768) NOT NULL (digital-me-db-1.sql) and
-     * pgvector enforces that exact dimension on insert. The test vector below is zero-padded to 768
+     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(1024) NOT NULL (digital-me-db-1.sql) and
+     * pgvector enforces that exact dimension on insert. The test vector below is zero-padded to 1024
      * dims so inserts succeed; zero-padding doesn't change what any test in this file asserts, since
      * these embeddings are never used in a similarity comparison here.
      */
-    private static final int DIMENSIONS = 768;
+    private static final int DIMENSIONS = 1024;
 
     private static float[] embeddingBytes() {
         float[] padded = new float[DIMENSIONS];

@@ -18,10 +18,7 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Objects;
-import java.util.Set;
 
 public class DatabaseAdapter {
 
@@ -179,13 +176,20 @@ public class DatabaseAdapter {
     }
 
     public static void runSql(String sqlScript) {
-
         Connection c = null;
-        Statement stmt = null;
-        String curStmt = null;
-
         try {
             c = getConnection();
+            runSql(c, sqlScript);
+        } finally {
+            safeClose(c);
+        }
+    }
+
+    /** Runs each ";"-separated statement of sqlScript on the given connection (its transaction state is the caller's). */
+    private static void runSql(Connection c, String sqlScript) {
+        Statement stmt = null;
+        String curStmt = null;
+        try {
             stmt = c.createStatement();
             String[] sqlStatements = sqlScript.split(";");
             for (String sqlStatement : sqlStatements) {
@@ -206,7 +210,7 @@ public class DatabaseAdapter {
             }
             throw new RouterException("Could not run sql for schema " + schema + ", current statement=\n" + curStmt, e);
         } finally {
-            safeClose(stmt, c);
+            safeClose(stmt);
         }
     }
 
@@ -224,6 +228,34 @@ public class DatabaseAdapter {
             }
         }
         return true;
+    }
+
+    @FunctionalInterface
+    public interface TransactionBody<T> {
+        T run(Connection c) throws SQLException;
+    }
+
+    /**
+     * Runs body on one connection with autocommit off: commits when it returns, rolls back and
+     * rethrows as RouterException on any exception.
+     */
+    public static <T> T inTransaction(TransactionBody<T> body) {
+        Connection c = getConnection();
+        try {
+            c.setAutoCommit(false);
+            T result = body.run(c);
+            c.commit();
+            return result;
+        } catch (Exception e) {
+            try {
+                c.rollback();
+            } catch (SQLException rollbackFailure) {
+                e.addSuppressed(rollbackFailure);
+            }
+            throw new RouterException("Transaction failed", e);
+        } finally {
+            safeClose(c);
+        }
     }
 
     public static void runPreparedStatement(String sql, Object... params) {
@@ -249,44 +281,44 @@ public class DatabaseAdapter {
      * Set up the database schema, all tables and necessary initialization data
      */
     public static void init() {
+        initUpTo(Integer.MAX_VALUE);
+    }
 
-        Set<String> resources = new LinkedHashSet<>();
-        int max;
-        for (int i = 1;; i++) {
-            String resource = "/digital-me-db-" + i + ".sql";
-            InputStream in = DatabaseAdapter.class.getResourceAsStream(resource);
-            if (in != null) {
-                resources.add(resource);
-            } else {
-                max = i - 1;
-                break;
-            }
-        }
-
-
+    /**
+     * Applies pending migration scripts with number <= maxVersion. Each script and the
+     * database.version update that records it run together in ONE transaction: a failing script
+     * (including a script re-applied to an already-migrated schema) rolls back completely.
+     * Package-visible so tests can build a schema at an older version.
+     */
+    static void initUpTo(int maxVersion) {
+        int curVersion = 0;
         List<String> tables = selectList(
                 "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()",
                 new ResultSetStringTransform());
-        if (!tables.isEmpty()) {
-            if (tables.contains("application_metadata")) {
-                String curVersionName = selectOne("SELECT VALUE FROM APPLICATION_METADATA WHERE KEY='database.version'", new ResultSetStringTransform());
-                if (curVersionName == null) {
-                    curVersionName = "0";
-                }
-                int curVersion = Integer.parseInt(curVersionName);
-                for (int i = 1; i <= curVersion; i++) {
-                    //all resources between version 1 and the current version have already been run
-                    resources.remove("/digital-me-db-" + i + ".sql");
-                }
+        if (tables.contains("application_metadata")) {
+            String curVersionName = selectOne("SELECT VALUE FROM APPLICATION_METADATA WHERE KEY='database.version'", new ResultSetStringTransform());
+            if (curVersionName != null) {
+                curVersion = Integer.parseInt(curVersionName);
             }
         }
 
-        for (String resource : resources) {
-            String sqlScript = inputStreamToString(Objects.requireNonNull(DatabaseAdapter.class.getResourceAsStream(resource)));
-            runSql(sqlScript);
+        for (int i = curVersion + 1; i <= maxVersion; i++) {
+            InputStream in = DatabaseAdapter.class.getResourceAsStream("/digital-me-db-" + i + ".sql");
+            if (in == null) {
+                break;
+            }
+            String sqlScript = inputStreamToString(in);
+            int version = i;
+            inTransaction(c -> {
+                runSql(c, sqlScript);
+                try (PreparedStatement ps = c.prepareStatement(
+                        "UPDATE APPLICATION_METADATA SET VALUE=? WHERE KEY='database.version'")) {
+                    ps.setString(1, String.valueOf(version));
+                    ps.executeUpdate();
+                }
+                return null;
+            });
         }
-
-        runPreparedStatement("UPDATE APPLICATION_METADATA SET VALUE=? WHERE KEY='database.version';", max);
     }
 
     private static String inputStreamToString(InputStream inputStream) {

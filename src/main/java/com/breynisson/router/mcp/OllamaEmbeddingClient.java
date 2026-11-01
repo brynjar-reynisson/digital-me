@@ -32,7 +32,7 @@ public class OllamaEmbeddingClient implements EmbeddingClient {
 
     public OllamaEmbeddingClient(
             @Value("${ollama.url:http://localhost:11434}") String ollamaUrl,
-            @Value("${ollama.embedding.model:nomic-embed-text}") String model,
+            @Value("${ollama.embedding.model:bge-m3}") String model,
             ObjectMapper objectMapper) {
         this.ollamaUrl = ollamaUrl;
         this.model = model;
@@ -48,6 +48,14 @@ public class OllamaEmbeddingClient implements EmbeddingClient {
         text = text.replace("\\n", " ").replace("\\t", " ").replace("\\r", " ");
         // Collapse any remaining whitespace runs to a single space
         return text.replaceAll("\\s+", " ").strip();
+    }
+
+    /**
+     * True if the text is empty once normalised, i.e. {@link #embed} would send Ollama an empty
+     * prompt (for which it returns no embedding). Such chunks carry no content and are never embedded.
+     */
+    public static boolean isBlankAfterNormalisation(String text) {
+        return normalise(text).isEmpty();
     }
 
     @Override

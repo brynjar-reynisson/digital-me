@@ -24,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -48,12 +49,12 @@ class IndexPageTest {
     }
 
     /**
-     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(768) NOT NULL (digital-me-db-1.sql) and
-     * pgvector enforces that exact dimension on insert. The test vector below is zero-padded to 768
+     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(1024) NOT NULL (digital-me-db-1.sql) and
+     * pgvector enforces that exact dimension on insert. The test vector below is zero-padded to 1024
      * dims so inserts succeed; zero-padding doesn't change what any test in this file asserts, since
      * these embeddings are never used in a similarity comparison here.
      */
-    private static final int DIMENSIONS = 768;
+    private static final int DIMENSIONS = 1024;
 
     private static float[] embeddingBytes() {
         float[] padded = new float[DIMENSIONS];
@@ -92,7 +93,7 @@ class IndexPageTest {
         Files.writeString(indexedFile, "source-indexed\ncontent");
         Files.writeString(mcpResourcesDir.resolve("unindexed.txt"), "source-unindexed\ncontent");
         McpEmbeddingDao.upsert(new McpEmbedding(indexedFile.toAbsolutePath().toString(), 0, "source-indexed",
-                "content", embeddingBytes(), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+                "content", embeddingBytes(), "bge-m3", "2026-01-01T00:00:00Z"));
 
         try {
             Map<String, Object> health = indexPage.indexHealth();
@@ -115,6 +116,14 @@ class IndexPageTest {
 
         assertEquals(0, health.get("totalFilesOnDisk"));
         assertEquals(100.0, health.get("coveragePercent"));
+    }
+
+    @Test
+    void healthIndexHasExactlyTheFourCoverageKeys() {
+        Map<String, Object> health = indexPage.indexHealth();
+
+        assertEquals(Set.of("indexedFiles", "totalChunks", "totalFilesOnDisk", "coveragePercent"),
+                health.keySet());
     }
 
     @Test
@@ -176,7 +185,7 @@ class IndexPageTest {
         Path resourceFile = tempDir.resolve("16-10-00-00-claudecode-some-project.txt");
         Files.writeString(resourceFile, sourceUrl + "\nHello from claude session");
         McpEmbeddingDao.upsert(new McpEmbedding(resourceFile.toAbsolutePath().toString(), 0, sourceUrl,
-                "Hello from claude session", embeddingBytes(), "nomic-embed-text", "2026-01-01T00:00:00Z"));
+                "Hello from claude session", embeddingBytes(), "bge-m3", "2026-01-01T00:00:00Z"));
 
         String html = indexPage.localFile(sourceUrl);
 

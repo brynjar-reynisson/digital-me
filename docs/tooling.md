@@ -48,4 +48,4 @@ Run once, after upgrading to this version and before relying on it day to day:
 java -jar target/digital-me-0.1.jar --digitalme.migrate-sqlite-path=C:\Users\Lenovo\DigitalMe\digital-me.db
 ```
 
-This copies every row out of the old SQLite file into the already-schema'd Postgres database and exits — it does not start the web server, and never modifies or deletes the old SQLite file. Not safe to re-run against a non-empty Postgres database (not idempotent). The migration zero-pads any short embeddings to 768 dimensions (a no-op for real legacy data from `nomic-embed-text`, defensive against corrupt rows).
+This copies every row out of the old SQLite file into the already-schema'd Postgres database and exits — it does not start the web server, and never modifies or deletes the old SQLite file. Not safe to re-run against a non-empty Postgres database (not idempotent). The migration zero-pads any short embeddings to the embedding table's dimension (a no-op for real legacy data, defensive against corrupt rows).

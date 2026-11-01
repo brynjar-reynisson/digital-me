@@ -31,7 +31,8 @@ import java.util.stream.Stream;
 public class EmbeddingIndex {
 
     private static final Logger log = LoggerFactory.getLogger(EmbeddingIndex.class);
-    private static final String DEFAULT_MODEL = "nomic-embed-text";
+    private static final String DEFAULT_MODEL = "bge-m3";
+    private static final long DEFAULT_MAX_FILE_BYTES = 1_048_576L;
 
     private final EmbeddingClient embeddingClient;
     private final Path mcpResourcesDir;
@@ -40,16 +41,18 @@ public class EmbeddingIndex {
     private final String queryPrefix;
     private final float minScore;
     private final boolean migrating;
+    private final long maxFileBytes;
 
     @Autowired
     public EmbeddingIndex(
             EmbeddingClient embeddingClient,
             @Value("${data.dir:.}") String dataDir,
             @Value("${ollama.embedding.model:" + DEFAULT_MODEL + "}") String model,
-            @Value("${ollama.embedding.document-prefix:search_document:}") String documentPrefix,
-            @Value("${ollama.embedding.query-prefix:search_query:}") String queryPrefix,
-            @Value("${semantic-search.min-score:0.5}") float minScore,
-            @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath) {
+            @Value("${ollama.embedding.document-prefix:}") String documentPrefix,
+            @Value("${ollama.embedding.query-prefix:}") String queryPrefix,
+            @Value("${semantic-search.min-score:0.35}") float minScore,
+            @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath,
+            @Value("${embedding.max-file-bytes:1048576}") long maxFileBytes) {
         this.embeddingClient = embeddingClient;
         this.mcpResourcesDir = Paths.get(dataDir, ResourceReceiver.MCP_RESOURCES_DIR);
         this.model = model;
@@ -57,11 +60,33 @@ public class EmbeddingIndex {
         this.queryPrefix = queryPrefix;
         this.minScore = minScore;
         this.migrating = !migrateSqlitePath.isBlank();
+        this.maxFileBytes = maxFileBytes;
     }
 
     /** Convenience constructor for tests: default model, no task prefixes, no score threshold. */
     public EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir) {
-        this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f, "");
+        this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f, "", DEFAULT_MAX_FILE_BYTES);
+    }
+
+    /** Test constructor: full configuration with the default file-size cap. */
+    EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir, String model, String documentPrefix,
+                   String queryPrefix, float minScore, String migrateSqlitePath) {
+        this(embeddingClient, dataDir, model, documentPrefix, queryPrefix, minScore, migrateSqlitePath,
+                DEFAULT_MAX_FILE_BYTES);
+    }
+
+    /** Test constructor with an explicit file-size cap (0 or negative disables it). */
+    EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir, long maxFileBytes) {
+        this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f, "", maxFileBytes);
+    }
+
+    /** True (and logs) when the file exceeds the cap; checks size only, never reads contents. */
+    private boolean isOversized(Path file) throws IOException {
+        if (maxFileBytes <= 0) return false;
+        long size = Files.size(file);
+        if (size <= maxFileBytes) return false;
+        log.info("Skipping oversized file for embedding ({} bytes > cap {}): {}", size, maxFileBytes, file);
+        return true;
     }
 
     /**
@@ -84,9 +109,9 @@ public class EmbeddingIndex {
             Set<String> diskPaths = listFilePaths();
             reconcileStaleFiles(diskPaths);
             McpEmbeddingDao.deleteByModelNot(model);
-            Set<String> indexed = McpEmbeddingDao.findAllFilePaths();
+            Set<String> indexed = new HashSet<>(McpEmbeddingDao.findAllFilePaths());
             for (String path : diskPaths) {
-                if (!indexed.contains(path)) indexFile(Paths.get(path));
+                if (!indexed.contains(path)) indexFile(Paths.get(path)); // indexFile applies the size cap
             }
         } catch (Exception e) {
             log.warn("Error during startup embedding indexing", e);
@@ -113,7 +138,8 @@ public class EmbeddingIndex {
     }
 
     private void reconcileStaleFiles(Set<String> diskPaths) {
-        for (String dbPath : McpEmbeddingDao.findAllFilePaths()) {
+        Set<String> dbPaths = new HashSet<>(McpEmbeddingDao.findAllFilePaths());
+        for (String dbPath : dbPaths) {
             if (!diskPaths.contains(dbPath)) {
                 McpEmbeddingDao.deleteByFilePath(dbPath);
             }
@@ -123,6 +149,7 @@ public class EmbeddingIndex {
     /** Generates and stores embeddings for the given file, one row per chunk. No-ops if Ollama is unavailable. */
     public void indexFile(Path file) {
         try {
+            if (isOversized(file)) return;
             String raw = Files.readString(file, StandardCharsets.UTF_8);
             String sourceUrl = ResourceReceiver.firstLine(raw);
             int nl = raw.indexOf('\n');
@@ -134,12 +161,13 @@ public class EmbeddingIndex {
             List<String> chunks = Chunker.chunk(body);
             for (int i = 0; i < chunks.size(); i++) {
                 String chunkText = chunks.get(i);
+                // A blank chunk has nothing to embed, skip it rather than abort the file
+                if (OllamaEmbeddingClient.isBlankAfterNormalisation(chunkText)) continue;
                 String toEmbed = documentPrefix.isEmpty() ? chunkText : documentPrefix + " " + chunkText;
                 float[] embedding = embeddingClient.embed(toEmbed);
                 if (embedding == null) return; // Ollama unavailable — retry the whole file next pass
-                float[] normalized = normalize(embedding);
                 rows.add(new com.breynisson.router.jdbc.model.McpEmbedding(
-                        filePath, i, sourceUrl, chunkText, normalized, model, indexedAt));
+                        filePath, i, sourceUrl, chunkText, normalize(embedding), model, indexedAt));
             }
             for (com.breynisson.router.jdbc.model.McpEmbedding row : rows) {
                 McpEmbeddingDao.upsert(row);
@@ -157,22 +185,24 @@ public class EmbeddingIndex {
      */
     public List<ScoredResult> findSimilar(String query, int topK) {
         String prefixedQuery = queryPrefix.isEmpty() ? query : queryPrefix + " " + query;
-        float[] rawQueryEmbedding = embeddingClient.embed(prefixedQuery);
-        if (rawQueryEmbedding == null) return List.of();
-        float[] queryVector = normalize(rawQueryEmbedding);
+        float[] raw = embeddingClient.embed(prefixedQuery);
+        if (raw == null) return List.of();
         try {
-            return McpEmbeddingDao.findSimilar(queryVector, minScore, topK).stream()
-                    .map(m -> new ScoredResult(m.filePath(), m.sourceUrl(), m.score(), m.chunkText()))
-                    .toList();
+            return McpEmbeddingDao.findSimilar(normalize(raw), minScore, topK)
+                    .stream().map(EmbeddingIndex::toResult).toList();
         } catch (Exception e) {
             log.warn("Embedding search failed", e);
             return List.of();
         }
     }
 
+    private static ScoredResult toResult(McpEmbeddingDao.ScoredMatch m) {
+        return new ScoredResult(m.filePath(), m.sourceUrl(), m.score(), m.chunkText());
+    }
+
     public record ScoredResult(String filePath, String sourceUrl, float score, String chunkText) {}
 
-    private static float[] normalize(float[] v) {
+    static float[] normalize(float[] v) {
         double magnitude = 0;
         for (float f : v) magnitude += f * (double) f;
         magnitude = Math.sqrt(magnitude);

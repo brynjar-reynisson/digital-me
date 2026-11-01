@@ -11,8 +11,7 @@ import java.util.Set;
 
 public class McpEmbeddingDao {
 
-    private static final String TABLE = "MCP_EMBEDDING";
-    private static final McpEmbedding.ResultSetTransform TRANSFORM = new McpEmbedding.ResultSetTransform();
+    public static final String TABLE = "MCP_EMBEDDING";
     private static final ScoredMatchTransform SCORED_MATCH_TRANSFORM = new ScoredMatchTransform();
 
     public static Set<String> findAllFilePaths() {
@@ -23,7 +22,7 @@ public class McpEmbeddingDao {
 
     public static Set<String> findFilePathsBySourceUrl(String sourceUrl) {
         return Set.copyOf(DatabaseAdapter.selectList(
-                "SELECT DISTINCT FILE_PATH FROM " + TABLE + " WHERE SOURCE_URL = ?",
+                "SELECT FILE_PATH FROM " + TABLE + " WHERE SOURCE_URL = ?",
                 DatabaseAdapter.RESULT_SET_STRING_TRANSFORM, sourceUrl));
     }
 
@@ -74,7 +73,7 @@ public class McpEmbeddingDao {
         // set to just the app/test schema (DatabaseAdapter/PostgresTestSupport), so the bare
         // operator is unresolvable ("operator does not exist: extensions.vector <=> extensions.vector",
         // confirmed live). OPERATOR(extensions.<=>) schema-qualifies it explicitly, the same way
-        // the DDL already schema-qualifies extensions.VECTOR(768) and extensions.vector_cosine_ops.
+        // the DDL already schema-qualifies extensions.VECTOR(1024) and extensions.vector_cosine_ops.
         PGvector vector = new PGvector(queryVector);
         return DatabaseAdapter.selectList(
                 "SELECT file_path, source_url, chunk_text, score FROM ("

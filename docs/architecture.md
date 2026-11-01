@@ -56,7 +56,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - `getConnection()` returns a pooled connection from HikariCP; registers pgvector type support via `PGvector.addVectorType(connection)`
 - `init()` must be called at startup — runs numbered migration scripts from classpath (`digital-me-db-N.sql`)
 - Migration tracking: `APPLICATION_METADATA` table with `database.version` key
-- To add a migration: create `src/main/resources/digital-me-db-3.sql` (next number after the existing two — check the highest existing `digital-me-db-N.sql` before picking a number)
+- To add a migration: create `src/main/resources/digital-me-db-4.sql` (next number after the existing three — check the highest existing `digital-me-db-N.sql` before picking a number)
 
 ### `TextEntryDao`
 - `NAME` column stores the file absolute path or URL (`source`)
@@ -79,16 +79,17 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - Used as a lambda throughout; tests pass `text -> null` (unavailable) or `text -> new float[]{...}` (mock)
 
 ### `OllamaEmbeddingClient`
-- Posts to `http://localhost:11434/api/embeddings` with model `nomic-embed-text`
+- Posts to `http://localhost:11434/api/embeddings` with model `bge-m3` (configurable via `ollama.embedding.model`; bge-m3 needs no task prefixes, so `ollama.embedding.document-prefix`/`query-prefix` default to empty)
 - **Normalises text** before embedding: replaces literal `\\n`, `\\t`, `\\r` (Chrome extension artifact) with spaces, collapses whitespace
-- **Caps at 3000 chars** after normalisation (nomic-embed-text has 2048-token context; Chrome extension content can be token-dense)
+- **Caps at 3000 chars** after normalisation (the request context is capped at 2048 tokens; Chrome extension content can be token-dense)
 - Sends `options.num_ctx=2048` in every request to set the model context window
 - Returns `null` on HTTP error or connection failure (caller skips indexing gracefully)
+- `isBlankAfterNormalisation(text)` — static; true when the text is empty after the normalisation above. Ollama returns an empty embedding for an empty prompt, so such chunks are never sent
 
 ### `EmbeddingIndex`
-- Runs `indexAll()` on a daemon thread at startup: loads already-indexed file paths from DB (one SELECT), then walks `mcp-resources/` and indexes new files only
-- `indexFile(path)`: reads the file, splits the body into ~2000-char sentence-boundary-aware chunks via `Chunker`, embeds each chunk (prefixed with `ollama.embedding.document-prefix`), normalizes to unit length, and stores one row per chunk in `MCP_EMBEDDING` via `McpEmbeddingDao.upsert()`
-- `findSimilar(query, topK)`: embeds the (prefixed) query, normalizes to unit length, delegates directly to `McpEmbeddingDao.findSimilar(queryVector, minScore, topK)` for SQL-side scoring via pgvector's `<=>` operator. Deduplication to each **source URL's** best-scoring chunk happens in the SQL `DISTINCT ON (source_url)` clause — a source resubmitted under a different physical file path still collapses to one result
+- Runs `indexAll()` on a daemon thread at startup: loads already-indexed file paths from DB (one SELECT), then walks `mcp-resources/` and indexes new files only. Files larger than `embedding.max-file-bytes` (default 1048576 = 1 MiB; `0` or negative disables the cap) are skipped by both `indexAll()` and `indexFile()` based on file size alone, without being read, and logged at INFO — added after two ~59 MB base64 blobs starved Ollama. Skipped files get no embedding rows (they remain findable by keyword/Lucene search)
+- `indexFile(path)`: reads the file, splits the body into ~2000-char sentence-boundary-aware chunks via `Chunker`, embeds each chunk (prefixed with `ollama.embedding.document-prefix`, empty by default), normalizes to unit length, and stores one row per chunk in `MCP_EMBEDDING` via `McpEmbeddingDao.upsert()`. Chunks that are blank after normalisation are skipped (never sent to Ollama, never stored) rather than aborting the file
+- `findSimilar(query, topK)`: filters on `semantic-search.min-score` (default `0.35`, a **provisional, still uncalibrated** value); embeds the (prefixed) query, normalizes to unit length, delegates directly to `McpEmbeddingDao.findSimilar(queryVector, minScore, topK)` for SQL-side scoring via pgvector's `<=>` operator. Deduplication to each **source URL's** best-scoring chunk happens in the SQL `DISTINCT ON (source_url)` clause — a source resubmitted under a different physical file path still collapses to one result
 - `indexAll()` additionally reconciles the table on each run: deletes rows for files no longer on disk, and deletes rows whose `MODEL` doesn't match the currently configured `ollama.embedding.model` (both get re-embedded on the same pass)
 - `countFilesOnDisk()` — recursive count of regular files under `mcp-resources/` (reuses the same walk as `listFilePaths()`, counting instead of collecting); returns `0` if the directory doesn't exist. Backs the `totalFilesOnDisk` figure in `/health/index`
 
@@ -175,9 +176,9 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 
 ## Database schema
 
-Postgres (via `digital-me-db-1.sql` and `digital-me-db-2.sql`, run in order):
+Postgres (via `digital-me-db-1.sql` through `digital-me-db-4.sql`, run in order). `DatabaseAdapter.init()` applies each pending script together with its `database.version` update in ONE transaction, so a failing script (including one re-applied to an already-migrated schema) rolls back completely instead of leaving a half-migrated schema:
 
-### `digital-me-db-1.sql` (initial schema)
+### `digital-me-db-1.sql` (initial schema, as originally created; `MCP_EMBEDDING` was `VECTOR(768)` for nomic-embed-text and is replaced by db-3/db-4)
 ```sql
 -- This shared database (Supabase local dev stack, also serving agent-suite
 -- and soulman) already has a conventional "extensions" schema for exactly
@@ -243,9 +244,23 @@ INSERT INTO APPLICATION_METADATA (KEY, VALUE) VALUES ('database.version', '2')
 ON CONFLICT (KEY) DO UPDATE SET VALUE = '2';
 ```
 
+### `digital-me-db-3.sql` (schema v3: bge-m3 migration, historical)
+Added a nullable `MIGRATED_AT` column (plus a partial index on unmigrated rows) to the then-nomic `MCP_EMBEDDING`, and created `MCP_EMBEDDING_V2` with `EMBEDDING extensions.VECTOR(1024)`, an HNSW index (`mcp_embedding_v2_hnsw_idx`) and a `SOURCE_URL` index (`mcp_embedding_v2_source_idx`). Used by the since-removed background migrator to re-embed all content with bge-m3. Every statement is idempotent.
+
+### `digital-me-db-4.sql` (schema v4: single bge-m3 table)
+```sql
+DROP TABLE MCP_EMBEDDING;
+ALTER TABLE MCP_EMBEDDING_V2 RENAME TO MCP_EMBEDDING;
+ALTER INDEX mcp_embedding_v2_pkey RENAME TO mcp_embedding_pkey;
+ALTER INDEX mcp_embedding_v2_hnsw_idx RENAME TO mcp_embedding_hnsw_idx;
+ALTER INDEX mcp_embedding_v2_source_idx RENAME TO mcp_embedding_source_idx;
+-- bumps database.version to 4
+```
+The rename deliberately has no `IF EXISTS`, so re-applying the script to an already-migrated schema fails and its transaction rolls back rather than dropping the live table. **db-4 is irreversible**: the nomic table (768-dim) is dropped, so an older jar cannot run against the migrated schema and rolling back requires restoring a database backup. Afterwards `MCP_EMBEDDING` is the only embedding table, `VECTOR(1024)`, holding bge-m3 vectors.
+
 `TIME` and `INDEXED_AT` are stored as ISO-8601 instant strings (e.g. `2024-01-15T10:30:00Z`).
 
-`VECTOR(768)` is fixed to `nomic-embed-text`'s output dimension — the only supported embedding model. Changing `ollama.embedding.model` to a different-dimension model requires a new migration (`ALTER TABLE MCP_EMBEDDING ALTER COLUMN EMBEDDING TYPE vector(N)`), the same way `deleteByModelNot()` already discards and re-embeds on any model change today. `EMBEDDING` is queried via pgvector's `<=>` cosine-distance operator, not loaded into application memory — but scored exactly and sequentially: `findSimilar()`'s `ORDER BY source_url, embedding OPERATOR(extensions.<=>) ?` sorts primarily by `source_url` (to support `DISTINCT ON (source_url)`) with no `LIMIT` on that subquery, so Postgres cannot use the `mcp_embedding_hnsw_idx` HNSW index for this query — it sequentially scans and cosine-scores every row instead. Results are exact (not approximate ANN), and the index exists on the column for a future differently-shaped query to use, but no current query is index-accelerated.
+`MCP_EMBEDDING`'s `VECTOR(1024)` is fixed to `bge-m3`'s output dimension — the only supported model. Changing `ollama.embedding.model` to a different-dimension model requires a new migration (`ALTER TABLE MCP_EMBEDDING ALTER COLUMN EMBEDDING TYPE vector(N)`); `deleteByModelNot()` (run by `indexAll()`) discards rows embedded by any other model so they get re-embedded. `EMBEDDING` is queried via pgvector's `<=>` cosine-distance operator, not loaded into application memory — but scored exactly and sequentially: `findSimilar()`'s `ORDER BY source_url, embedding OPERATOR(extensions.<=>) ?` sorts primarily by `source_url` (to support `DISTINCT ON (source_url)`) with no `LIMIT` on that subquery, so Postgres cannot use the `mcp_embedding_hnsw_idx` HNSW index for this query — it sequentially scans and cosine-scores every row instead. Results are exact (not approximate ANN), and the index exists on the column for a future differently-shaped query to use, but no current query is index-accelerated.
 
 ---
 

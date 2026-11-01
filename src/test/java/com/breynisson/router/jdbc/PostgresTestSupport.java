@@ -27,9 +27,21 @@ public final class PostgresTestSupport {
     }
 
     public static String createIsolatedSchema(String namePrefix) {
+        String schema = createEmptySchema(namePrefix);
+        DatabaseAdapter.init();
+        return schema;
+    }
+
+    /** As {@link #createIsolatedSchema} but only applies migration scripts up to maxVersion. */
+    public static String createIsolatedSchemaAtVersion(String namePrefix, int maxVersion) {
+        String schema = createEmptySchema(namePrefix);
+        DatabaseAdapter.initUpTo(maxVersion);
+        return schema;
+    }
+
+    private static String createEmptySchema(String namePrefix) {
         String schema = namePrefix + "_" + UUID.randomUUID().toString().replace("-", "");
         DatabaseAdapter.configure(HOST, PORT, DATABASE, USER, PASSWORD, schema);
-        DatabaseAdapter.init();
         return schema;
     }
 

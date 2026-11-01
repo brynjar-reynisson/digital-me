@@ -33,14 +33,14 @@ class EmbeddingIndexTest {
     Path dataDir;
 
     /**
-     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(768) NOT NULL (digital-me-db-1.sql) and
+     * MCP_EMBEDDING.EMBEDDING is declared extensions.VECTOR(1024) NOT NULL (digital-me-db-1.sql) and
      * pgvector enforces that exact dimension on insert. The EmbeddingClient lambdas below return
      * short test vectors (e.g. {1.0f, 0.0f}) for readability, so every one of them is zero-padded
-     * to 768 dims via {@link #v} before EmbeddingIndex normalizes/stores it. Zero-padding both
+     * to 1024 dims via {@link #v} before EmbeddingIndex normalizes/stores it. Zero-padding both
      * sides of a cosine comparison leaves the dot product and magnitude (and so the cosine score)
      * identical to the unpadded vectors, so this doesn't change what any test asserts.
      */
-    private static final int DIMENSIONS = 768;
+    private static final int DIMENSIONS = 1024;
 
     private static float[] v(float... values) {
         float[] padded = new float[DIMENSIONS];
@@ -51,6 +51,22 @@ class EmbeddingIndexTest {
     private static void cleanup(Path... files) {
         for (Path f : files)
             DatabaseAdapter.runSql("DELETE FROM MCP_EMBEDDING WHERE FILE_PATH='" + f.toAbsolutePath() + "'");
+    }
+
+    private static int count(String extraWhere, Path file) {
+        return DatabaseAdapter.selectOne(
+                "SELECT COUNT(*) FROM MCP_EMBEDDING WHERE FILE_PATH = ?" + extraWhere,
+                rset -> {
+                    rset.next();
+                    return List.of(rset.getInt(1));
+                }, file.toAbsolutePath().toString());
+    }
+
+    private Path write(String name, String url, String body) throws Exception {
+        Path dir = Files.createDirectories(dataDir.resolve("mcp-resources").resolve("2026-03"));
+        Path f = dir.resolve(name);
+        Files.writeString(f, url + "\n" + body);
+        return f;
     }
 
     @Test
@@ -164,7 +180,7 @@ class EmbeddingIndexTest {
                     if (text.contains("relevant content")) return v(1.0f, 0.0f);
                     return v(1.0f, 0.0f); // query
                 },
-                dataDir.toString(), "nomic-embed-text", "", "", 0.5f, "");
+                dataDir.toString(), "bge-m3", "", "", 0.5f, "");
 
         index.indexFile(fileA);
         index.indexFile(fileB);
@@ -188,7 +204,7 @@ class EmbeddingIndexTest {
                     if (text.contains("Weak match")) return v(0.0f, 1.0f);
                     return v(1.0f, 0.0f); // query
                 },
-                dataDir.toString(), "nomic-embed-text", "", "", 0f, "");
+                dataDir.toString(), "bge-m3", "", "", 0f, "");
 
         index.indexFile(file);
         List<EmbeddingIndex.ScoredResult> results = index.findSimilar("query", 10);
@@ -274,7 +290,7 @@ class EmbeddingIndexTest {
                     captured[0] = text;
                     return v(1.0f);
                 },
-                dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f, "");
+                dataDir.toString(), "bge-m3", "search_document:", "search_query:", 0f, "");
 
         index.indexFile(file);
 
@@ -290,10 +306,100 @@ class EmbeddingIndexTest {
                     captured[0] = text;
                     return null;
                 },
-                dataDir.toString(), "nomic-embed-text", "search_document:", "search_query:", 0f, "");
+                dataDir.toString(), "bge-m3", "search_document:", "search_query:", 0f, "");
 
         index.findSimilar("hello", 5);
 
         assertEquals("search_query: hello", captured[0]);
+    }
+
+    @Test
+    void indexFileSkipsBlankChunksKeepingOriginalIndexes() throws Exception {
+        Path f = write("blank.txt", "http://blank.com", " ".repeat(Chunker.TARGET_CHUNK_CHARS) + "hello");
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString());
+        index.indexFile(f);
+
+        assertEquals(1, count("", f));
+        assertEquals(1, count(" AND CHUNK_INDEX = 1", f));
+        cleanup(f);
+    }
+
+    @Test
+    void indexFileAllBlankWritesNothingAndDoesNotThrow() throws Exception {
+        Path f = write("allblank.txt", "http://allblank.com", "\n");
+        AtomicInteger calls = new AtomicInteger();
+        EmbeddingIndex index = new EmbeddingIndex(text -> { calls.incrementAndGet(); return v(1.0f); }, dataDir.toString());
+        index.indexFile(f);
+
+        assertEquals(0, count("", f));
+        assertEquals(0, calls.get());
+        cleanup(f);
+    }
+
+    @Test
+    void indexFileNullEmbeddingForNonBlankChunkStillAbortsFile() throws Exception {
+        Path f = write("nullreal.txt", "http://nullreal.com", " ".repeat(Chunker.TARGET_CHUNK_CHARS) + "hello");
+        EmbeddingIndex index = new EmbeddingIndex(text -> null, dataDir.toString());
+        index.indexFile(f);
+
+        assertEquals(0, count("", f));
+        cleanup(f);
+    }
+
+    @Test
+    void indexFileStoresConfiguredModelName() throws Exception {
+        Path f = write("model.txt", "http://model.com", "hello");
+        new EmbeddingIndex(text -> v(1.0f), dataDir.toString()).indexFile(f);
+
+        assertEquals(1, count(" AND MODEL = 'bge-m3'", f));
+        cleanup(f);
+    }
+
+    @Test
+    void indexFileSkipsFileOverSizeCap() throws Exception {
+        Path file = write("big.txt", "http://big.example.com", "x".repeat(500));
+        cleanup(file);
+        AtomicInteger calls = new AtomicInteger();
+        EmbeddingIndex index = new EmbeddingIndex(text -> { calls.incrementAndGet(); return v(1.0f); },
+                dataDir.toString(), 100L);
+        index.indexFile(file);
+        assertEquals(0, calls.get());
+        assertEquals(0, count("", file));
+    }
+
+    @Test
+    void indexFileIndexesFileAtOrUnderCap() throws Exception {
+        Path file = write("small.txt", "http://small.example.com", "hello");
+        cleanup(file);
+        long size = Files.size(file);
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(), size);
+        index.indexFile(file);
+        assertTrue(count("", file) > 0);
+        cleanup(file);
+    }
+
+    @Test
+    void indexAllSkipsOversizedFilesAndStillIndexesOthers() throws Exception {
+        Path small = write("a-small.txt", "http://a.example.com", "tiny");
+        Path big = write("b-big.txt", "http://b.example.com", "y".repeat(500));
+        cleanup(small, big);
+        AtomicInteger calls = new AtomicInteger();
+        EmbeddingIndex index = new EmbeddingIndex(text -> { calls.incrementAndGet(); return v(1.0f); },
+                dataDir.toString(), 100L);
+        index.indexAll();
+        assertTrue(count("", small) > 0);
+        assertEquals(0, count("", big));
+        assertEquals(1, calls.get());
+        cleanup(small, big);
+    }
+
+    @Test
+    void capZeroDisablesTheCheck() throws Exception {
+        Path file = write("zero.txt", "http://zero.example.com", "z".repeat(500));
+        cleanup(file);
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(), 0L);
+        index.indexFile(file);
+        assertTrue(count("", file) > 0);
+        cleanup(file);
     }
 }
