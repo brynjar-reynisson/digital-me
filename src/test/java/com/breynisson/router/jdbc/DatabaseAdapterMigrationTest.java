@@ -21,6 +21,13 @@ class DatabaseAdapterMigrationTest {
                 DatabaseAdapter.RESULT_SET_STRING_TRANSFORM);
     }
 
+    private static String rowFingerprint(String table) {
+        return DatabaseAdapter.selectOne(
+                "SELECT FILE_PATH || '|' || CHUNK_INDEX || '|' || SOURCE_URL || '|' || CHUNK_TEXT || '|' "
+              + "|| MODEL || '|' || INDEXED_AT || '|' || EMBEDDING::text FROM " + table,
+                DatabaseAdapter.RESULT_SET_STRING_TRANSFORM);
+    }
+
     private static int count(String sql) {
         return DatabaseAdapter.selectOne(sql, DatabaseAdapter.RESULT_SET_INT_TRANSFORM);
     }
@@ -34,10 +41,13 @@ class DatabaseAdapterMigrationTest {
                     + "VALUES ('/tmp/db4-legacy.txt', 0, 'http://legacy.com', 'legacy', array_fill(0, ARRAY[768])::real[]::extensions.vector, 'nomic-embed-text', '2026-01-01T00:00:00Z', '2026-02-02T00:00:00Z')");
             float[] v2 = new float[1024];
             v2[0] = 1.0f;
+            v2[5] = 0.25f;
+            v2[1023] = -0.5f;
             DatabaseAdapter.runPreparedStatement(
                     "INSERT INTO MCP_EMBEDDING_V2 (FILE_PATH, CHUNK_INDEX, SOURCE_URL, CHUNK_TEXT, EMBEDDING, MODEL, INDEXED_AT) "
-                  + "VALUES (?, 0, 'http://v2.com', 'v2 text', ?, 'bge-m3', '2026-01-01T00:00:00Z')",
+                  + "VALUES (?, 3, 'http://v2.com', 'v2 text', ?, 'bge-m3', '2026-03-04T05:06:07Z')",
                     FILE, new PGvector(v2));
+            String before = rowFingerprint("MCP_EMBEDDING_V2");
 
             DatabaseAdapter.init();
 
@@ -52,6 +62,29 @@ class DatabaseAdapterMigrationTest {
             assertEquals(1, hits.size());
             assertEquals("http://v2.com", hits.get(0).sourceUrl());
             assertEquals(Set.of(FILE), McpEmbeddingDao.findAllFilePaths());
+
+            // every column of the V2 row survives byte-for-byte (chunk_text, model, indexed_at, chunk_index, vector)
+            String after = rowFingerprint("MCP_EMBEDDING");
+            assertEquals(before, after);
+            assertTrue(after.contains("v2 text") && after.contains("bge-m3") && after.contains("2026-03-04T05:06:07Z"));
+            assertEquals(3, count("SELECT CHUNK_INDEX FROM MCP_EMBEDDING"));
+
+            // constraint/index names match a fresh install
+            assertEquals(1, count("SELECT COUNT(*) FROM pg_constraint WHERE conrelid = to_regclass('MCP_EMBEDDING') "
+                    + "AND contype = 'p' AND conname = 'mcp_embedding_pkey'"));
+            assertEquals(1, count("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() "
+                    + "AND tablename = 'mcp_embedding' AND indexname = 'mcp_embedding_hnsw_idx'"));
+            assertEquals(1, count("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() "
+                    + "AND tablename = 'mcp_embedding' AND indexname = 'mcp_embedding_source_idx'"));
+
+            // the renamed primary key still backs ON CONFLICT: upserting the same key twice updates, not fails
+            assertDoesNotThrow(() -> McpEmbeddingDao.upsert(
+                    new McpEmbedding(FILE, 3, "http://v2.com", "updated text", v2, "bge-m3", "2026-05-05T00:00:00Z")));
+            assertDoesNotThrow(() -> McpEmbeddingDao.upsert(
+                    new McpEmbedding(FILE, 3, "http://v2.com", "updated again", v2, "bge-m3", "2026-06-06T00:00:00Z")));
+            assertEquals(1, count("SELECT COUNT(*) FROM MCP_EMBEDDING"));
+            assertEquals("updated again", DatabaseAdapter.selectOne(
+                    "SELECT CHUNK_TEXT FROM MCP_EMBEDDING", DatabaseAdapter.RESULT_SET_STRING_TRANSFORM));
         } finally {
             PostgresTestSupport.dropSchema(schema);
         }
