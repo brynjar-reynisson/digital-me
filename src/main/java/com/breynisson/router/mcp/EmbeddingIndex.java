@@ -32,6 +32,7 @@ public class EmbeddingIndex {
 
     private static final Logger log = LoggerFactory.getLogger(EmbeddingIndex.class);
     private static final String DEFAULT_MODEL = "bge-m3";
+    private static final long DEFAULT_MAX_FILE_BYTES = 1_048_576L;
 
     private final EmbeddingClient embeddingClient;
     private final Path mcpResourcesDir;
@@ -40,6 +41,7 @@ public class EmbeddingIndex {
     private final String queryPrefix;
     private final float minScore;
     private final boolean migrating;
+    private final long maxFileBytes;
 
     @Autowired
     public EmbeddingIndex(
@@ -49,7 +51,8 @@ public class EmbeddingIndex {
             @Value("${ollama.embedding.document-prefix:}") String documentPrefix,
             @Value("${ollama.embedding.query-prefix:}") String queryPrefix,
             @Value("${semantic-search.min-score:0.35}") float minScore,
-            @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath) {
+            @Value("${digitalme.migrate-sqlite-path:}") String migrateSqlitePath,
+            @Value("${embedding.max-file-bytes:1048576}") long maxFileBytes) {
         this.embeddingClient = embeddingClient;
         this.mcpResourcesDir = Paths.get(dataDir, ResourceReceiver.MCP_RESOURCES_DIR);
         this.model = model;
@@ -57,11 +60,33 @@ public class EmbeddingIndex {
         this.queryPrefix = queryPrefix;
         this.minScore = minScore;
         this.migrating = !migrateSqlitePath.isBlank();
+        this.maxFileBytes = maxFileBytes;
     }
 
     /** Convenience constructor for tests: default model, no task prefixes, no score threshold. */
     public EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir) {
-        this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f, "");
+        this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f, "", DEFAULT_MAX_FILE_BYTES);
+    }
+
+    /** Test constructor: full configuration with the default file-size cap. */
+    EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir, String model, String documentPrefix,
+                   String queryPrefix, float minScore, String migrateSqlitePath) {
+        this(embeddingClient, dataDir, model, documentPrefix, queryPrefix, minScore, migrateSqlitePath,
+                DEFAULT_MAX_FILE_BYTES);
+    }
+
+    /** Test constructor with an explicit file-size cap (0 or negative disables it). */
+    EmbeddingIndex(EmbeddingClient embeddingClient, String dataDir, long maxFileBytes) {
+        this(embeddingClient, dataDir, DEFAULT_MODEL, "", "", 0f, "", maxFileBytes);
+    }
+
+    /** True (and logs) when the file exceeds the cap; checks size only, never reads contents. */
+    private boolean isOversized(Path file) throws IOException {
+        if (maxFileBytes <= 0) return false;
+        long size = Files.size(file);
+        if (size <= maxFileBytes) return false;
+        log.info("Skipping oversized file for embedding ({} bytes > cap {}): {}", size, maxFileBytes, file);
+        return true;
     }
 
     /**
@@ -86,7 +111,7 @@ public class EmbeddingIndex {
             McpEmbeddingDao.deleteByModelNot(model);
             Set<String> indexed = new HashSet<>(McpEmbeddingDao.findAllFilePaths());
             for (String path : diskPaths) {
-                if (!indexed.contains(path)) indexFile(Paths.get(path));
+                if (!indexed.contains(path)) indexFile(Paths.get(path)); // indexFile applies the size cap
             }
         } catch (Exception e) {
             log.warn("Error during startup embedding indexing", e);
@@ -124,6 +149,7 @@ public class EmbeddingIndex {
     /** Generates and stores embeddings for the given file, one row per chunk. No-ops if Ollama is unavailable. */
     public void indexFile(Path file) {
         try {
+            if (isOversized(file)) return;
             String raw = Files.readString(file, StandardCharsets.UTF_8);
             String sourceUrl = ResourceReceiver.firstLine(raw);
             int nl = raw.indexOf('\n');

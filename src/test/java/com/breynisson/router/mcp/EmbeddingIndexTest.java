@@ -354,4 +354,52 @@ class EmbeddingIndexTest {
         assertEquals(1, count(" AND MODEL = 'bge-m3'", f));
         cleanup(f);
     }
+
+    @Test
+    void indexFileSkipsFileOverSizeCap() throws Exception {
+        Path file = write("big.txt", "http://big.example.com", "x".repeat(500));
+        cleanup(file);
+        AtomicInteger calls = new AtomicInteger();
+        EmbeddingIndex index = new EmbeddingIndex(text -> { calls.incrementAndGet(); return v(1.0f); },
+                dataDir.toString(), 100L);
+        index.indexFile(file);
+        assertEquals(0, calls.get());
+        assertEquals(0, count("", file));
+    }
+
+    @Test
+    void indexFileIndexesFileAtOrUnderCap() throws Exception {
+        Path file = write("small.txt", "http://small.example.com", "hello");
+        cleanup(file);
+        long size = Files.size(file);
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(), size);
+        index.indexFile(file);
+        assertTrue(count("", file) > 0);
+        cleanup(file);
+    }
+
+    @Test
+    void indexAllSkipsOversizedFilesAndStillIndexesOthers() throws Exception {
+        Path small = write("a-small.txt", "http://a.example.com", "tiny");
+        Path big = write("b-big.txt", "http://b.example.com", "y".repeat(500));
+        cleanup(small, big);
+        AtomicInteger calls = new AtomicInteger();
+        EmbeddingIndex index = new EmbeddingIndex(text -> { calls.incrementAndGet(); return v(1.0f); },
+                dataDir.toString(), 100L);
+        index.indexAll();
+        assertTrue(count("", small) > 0);
+        assertEquals(0, count("", big));
+        assertEquals(1, calls.get());
+        cleanup(small, big);
+    }
+
+    @Test
+    void capZeroDisablesTheCheck() throws Exception {
+        Path file = write("zero.txt", "http://zero.example.com", "z".repeat(500));
+        cleanup(file);
+        EmbeddingIndex index = new EmbeddingIndex(text -> v(1.0f), dataDir.toString(), 0L);
+        index.indexFile(file);
+        assertTrue(count("", file) > 0);
+        cleanup(file);
+    }
 }
