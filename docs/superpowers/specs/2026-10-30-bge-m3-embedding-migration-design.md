@@ -183,3 +183,14 @@ Live testing showed that dual-write (every new chunk embedded by both nomic and 
 
 Some legacy chunks are blank once `OllamaEmbeddingClient` normalises them (e.g. the single chunk `"
 "` of an empty `.md` file). Ollama returns `{"embedding":[]}` for an empty prompt, which the client maps to `null`, so such a chunk could never be migrated, the file would be retried and penalised forever, and `remainingChunks` could never reach 0 (the automatic cutover trigger). Blank chunks are therefore never embedded: `OllamaEmbeddingClient.isBlankAfterNormalisation()` (the exact normalisation `embed()` applies) identifies them, `EmbeddingMigrator` marks them migrated in the same transaction as the file's other V2 rows (`commitMigration` overload taking `blankChunks`; an all-blank file commits with zero V2 rows) without touching the failure penalty box, and `EmbeddingIndex.indexFile` (V2 path) skips them instead of aborting the file. They have no V2 row and so are not semantically searchable, which is correct since they are empty.
+
+## Amendment 2026-11-01 (cleanup implemented)
+
+The migration finished on 2026-11-01: `remainingChunks` reached 0 and search cut over automatically to bge-m3. The scaffolding was then removed:
+
+- **Removed:** `EmbeddingMigrator`, `V2Settings`, the `embedding.v2.*` properties (including the enabled flag and the search-idle throttle), the migrated/unmigrated queries and `MIGRATED_AT` handling in `McpEmbeddingDao`, the nomic/bge-m3 switching in `EmbeddingIndex`, and the `migration` block of `/health/index` (`coveragePercent` is single-table and accurate again).
+- **`digital-me-db-4.sql`:** drops the nomic `MCP_EMBEDDING` table and renames `MCP_EMBEDDING_V2` (and its indexes) to `MCP_EMBEDDING`. It is irreversible; older jars cannot run against the migrated schema. The rename has no `IF EXISTS` on purpose.
+- **Atomic migrations:** `DatabaseAdapter.init()` now runs each migration script together with its `database.version` update in a single transaction, so a failed or accidentally re-applied script rolls back completely.
+- **Defaults:** `ollama.embedding.model` defaults to `bge-m3` with no task prefixes; `semantic-search.min-score` defaults to `0.35`. This min-score is still the uncalibrated provisional value and should be tuned against live Icelandic queries.
+- **File-size cap:** `embedding.max-file-bytes` (default 1 MiB; `0` disables) makes the embedding scan skip oversized files by size alone, without reading them. Added because two ~59 MB base64 blobs in `mcp-resources/` starved Ollama.
+- Blank-after-normalisation chunks are skipped (never embedded or stored).
