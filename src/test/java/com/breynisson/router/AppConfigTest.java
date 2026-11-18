@@ -14,7 +14,7 @@ class AppConfigTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final DeepseekSummarizeClient deepseek =
-            new DeepseekSummarizeClient("opencode.cmd", "deepseek/deepseek-v4-flash", 60, objectMapper);
+            new DeepseekSummarizeClient("opencode.cmd", "deepseek/deepseek-flash", 60, objectMapper);
     private final GeminiSummarizeClient gemini =
             new GeminiSummarizeClient("http://localhost:0", "key", "gemini-2.5-flash-lite", 10, objectMapper);
     private final OllamaSummarizeClient ollama =

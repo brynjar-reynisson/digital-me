@@ -133,7 +133,7 @@ The app must be run with `digital-me-dev/` as the working directory so relative 
 - Wraps a primary and a fallback `SummarizeClient`; `summarize()` tries the primary first and only calls the fallback when the primary returns `null`. `isAvailable()` is `primary.isAvailable() || fallback.isAvailable()`. Composes `GeminiSummarizeClient` (primary) with `DeepseekSummarizeClient` (fallback) to form the default `summarize.provider=gemini` behavior
 
 ### `DeepseekSummarizeClient`
-- Fallback summarization backend by default (used directly only when `summarize.provider=deepseek`); shells out to the `opencode` CLI: `opencode run --model <model> --format json "<prompt>"` (model configurable via `opencode.summarize.model`, default `deepseek/deepseek-v4-flash`)
+- Fallback summarization backend by default (used directly only when `summarize.provider=deepseek`); shells out to the `opencode` CLI: `opencode run --model <model> --format json "<prompt>"` (model configurable via `opencode.summarize.model`, default `deepseek/deepseek-flash`)
 - `opencode.command` defaults to `opencode.cmd`, not `opencode` — on Windows, `ProcessBuilder` does not do `cmd.exe`-style PATHEXT resolution of bare command names, so the npm `.cmd` shim must be named explicitly
 - Sends the same "Summarize in 2-3 sentences" instruction as `OllamaSummarizeClient`, but with a single-line `": "` separator instead of `":\n\n"` — `opencode.cmd` runs through `cmd.exe`, which truncates an argument at an embedded newline
 - Since `text` can originate from arbitrary scraped web pages and becomes a `cmd.exe`-routed argument, `sanitizeArgument()` strips characters `cmd.exe` treats specially (`& | < > ^ " %`, plus CR/LF) before building the prompt

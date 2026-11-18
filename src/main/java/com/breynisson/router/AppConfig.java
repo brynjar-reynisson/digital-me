@@ -68,7 +68,7 @@ public class AppConfig {
             ObjectMapper objectMapper,
             @Value("${summarize.provider:gemini}") String provider,
             @Value("${opencode.command:opencode.cmd}") String opencodeCommand,
-            @Value("${opencode.summarize.model:deepseek/deepseek-v4-flash}") String deepseekModel,
+            @Value("${opencode.summarize.model:deepseek/deepseek-flash}") String deepseekModel,
             @Value("${opencode.summarize.timeout-seconds:60}") long deepseekTimeoutSeconds,
             @Value("${ollama.url:http://localhost:11434}") String ollamaUrl,
             @Value("${ollama.summarize.model:llama3.2}") String ollamaModel,
