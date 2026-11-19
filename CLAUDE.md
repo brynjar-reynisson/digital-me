@@ -40,6 +40,7 @@ digital-me/
 │   ├── lucene-index/         Lucene index files
 │   ├── content-receive/      Drop files here to trigger ContentReceive route
 │   └── mcp-resources/        Files saved by MCP clients (year-month subdirs)
+├── scripts/                  screenshot-capture.py/.ps1 (OCR capture), comic-index.py (Wumo strip indexer)
 ├── docs/                     Detailed documentation (imported below)
 ├── frontend/                 React + Vite search UI
 │   └── src/

@@ -308,3 +308,24 @@ Exposed at `/actuator`:
 - **Extension overlap:** the Chrome extension's plain-text page captures for LinkedIn/Facebook/Quora/Google Docs URLs already covered by this pipeline are discarded server-side by `ScreenshotCoverage.isCovered()` (see the `/addContent` description above) — it mirrors this script's own subpage-gating rules (facebook and google docs: any page; linkedin/quora: only root or their specific exempt subpath) so pages this script skips (e.g. individual LinkedIn articles, Quora answers) still get stored from the extension. Google Docs is covered unconditionally like Facebook, not gated like LinkedIn/Quora — the extension's canvas-rendered capture of a Docs page is expected to be near-empty regardless of whether it's the homepage or an open document, so there's no "safe" Docs subpath worth preserving from the extension.
 - **Session consolidation:** consecutive captures of the same page are merged into one buffered session rather than sent individually. A session is keyed by the exact URL (`get_address_bar_url()`, chrome/edge only) or, when the URL can't be read, the site name. Each capture's OCR lines are appended to the session's line buffer with exact-string dedup (`merge_session_lines()`), so scrolled-past content accumulates in one place instead of being spread across many overlapping files. A session flushes (single `/addContent` POST via `flush_session()`) when a capture resolves to a different session key, or — as a safety net, checked every run via `check_idle_flush()` — when `IDLE_TIMEOUT_SECONDS` (120s) pass with no capture refreshing it, so a session isn't stranded if the browser is closed mid-session.
 - **Watcher loop:** `screenshot-capture.ps1` re-runs the script every 3 seconds, restarting itself if killed.
+
+---
+
+## Comic indexing (`scripts/comic-index.py`)
+
+Indexes Wumo daily strips (wumo.com) so they can be found by scene or remembered dialogue. Run on demand, not a service:
+
+```bash
+python -I scripts/comic-index.py --start 2012-12-06 --days 365
+```
+
+- **Fetch:** for each day, reads `https://wumo.com/wumo/YYYY/MM/DD`, takes the strip's image URL from the page's `og:image` tag (early strips are `.png` at predictable paths, later ones have hashed `.jpg` names, so the URL is read from the page rather than built), and downloads the image to `<data-dir>/comics/wumo/YYYY-MM-DD.<ext>`. A 404, or a page with no `og:image`, means the site has no strip that day (the archive has real gaps, including runs of consecutive days) and is recorded as `missing`.
+- **Describe:** attaches the image to `opencode run <prompt> --model deepseek/deepseek-flash --format json -f <image>` (the prompt must come before `-f`, which is an array option and otherwise swallows it). One call returns a `TEXT:` transcription of all text in the strip and a `SCENE:` description of the setting, characters and objects. The prompt explicitly forbids explaining the joke. Tesseract was tried first but is noisy on cartoon lettering, so the vision model does the transcription too. The prompt is a single line free of `cmd.exe`-special characters, for the same reason as `DeepseekSummarizeClient`.
+- **Index:** POSTs `{source: <page URL>, name: "Wumo YYYY-MM-DD", content: "Wumo cartoon <date>
+
+Text in the cartoon: ...
+
+Scene: ..."}` to `/addContent`, so it goes through the normal durable queue and embedding path.
+- **Resumable:** `<data-dir>/comics/wumo/state.json` maps each date to `done` or `missing`; finished dates are skipped on re-run. Failed days are not recorded, so they are retried next run. Three workers run in parallel by default (`--workers`); about 1% of days fail with an `opencode` "disk I/O error" at that concurrency, and a re-run (or `--workers 1`) clears them.
+- **Cost/speed:** roughly $0.0024 and 5-6 strips/minute at three workers, about $0.87 and an hour per year of strips.
+- **Re-submission:** `ResourceReceiver.deleteExistingFor()` replaces earlier content for the same source URL, but re-runs and retries can still leave extra `mcp-resources` files for a date.
